@@ -4,7 +4,7 @@ public class OrbitalMovement : MonoBehaviour
 {
     [Header("Referência")]
     [SerializeField]
-    private Transform centro;
+    public Transform centro;
 
     [Header("Órbita")]
     [SerializeField]
@@ -20,7 +20,7 @@ public class OrbitalMovement : MonoBehaviour
 
     [Header("Posição inicial")]
     [SerializeField, Range(0f, 360f)]
-    private float anguloInicial = 0f;
+    public float anguloInicial = 0f;
 
     [Header("Rotação do objeto")]
     [SerializeField]
@@ -33,8 +33,16 @@ public class OrbitalMovement : MonoBehaviour
 
     private void Start()
     {
-        anguloAtual = anguloInicial;
+        BackToStart();
         AtualizarOrbita();
+
+        if (transform.parent != null)
+            centro = transform.parent;
+    }
+
+    public void BackToStart()
+    {
+        anguloAtual = anguloInicial;
     }
 
     private void Update()
