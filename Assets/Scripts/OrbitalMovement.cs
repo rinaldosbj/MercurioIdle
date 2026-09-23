@@ -16,7 +16,7 @@ public class OrbitalMovement : MonoBehaviour
 
     [Tooltip("Rotação do plano da órbita")]
     [SerializeField]
-    private Vector3 rotacaoOrbita = Vector3.zero;
+    public Vector3 rotacaoOrbita = Vector3.zero;
 
     [Header("Posição inicial")]
     [SerializeField, Range(0f, 360f)]

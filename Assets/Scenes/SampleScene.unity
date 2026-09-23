@@ -1010,6 +1010,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MirrorSpawnManager
   _mirrorPrefab: {fileID: 375492243357778685, guid: 6e74cff98540548cca9e2c0626ac4089, type: 3}
+  _currentMaxMirrorsInRing: 2
+  _absoluteMaxMirrorsInRing: 64
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
