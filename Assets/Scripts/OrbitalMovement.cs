@@ -22,6 +22,15 @@ public class OrbitalMovement : MonoBehaviour
     [SerializeField, Range(0f, 360f)]
     public float anguloInicial = 0f;
 
+    [Header("Correção de posição")]
+    [Tooltip("Tempo para o mirror se reorganizar")]
+    [SerializeField]
+    private float tempoInterpolacao = 0.75f;
+
+    [Tooltip("Velocidade máxima usada para corrigir a fase")]
+    [SerializeField]
+    private float velocidadeMaximaCorrecao = 90f;
+
     [Header("Rotação do objeto")]
     [SerializeField]
     private bool olharParaOCentro = true;
@@ -29,20 +38,102 @@ public class OrbitalMovement : MonoBehaviour
     [SerializeField]
     private Vector3 offsetRotacao = Vector3.zero;
 
-    private float anguloAtual;
+    // Movimento orbital puro.
+    // Nunca volta.
+    private float anguloOrbital;
+
+    // Correção atual aplicada à fase da órbita.
+    private float correcaoAtual;
+
+    // Correção desejada.
+    private float correcaoAlvo;
+
+    private float velocidadeCorrecao;
+
+    private bool corrigindo;
+
+    /// <summary>
+    /// Ângulo visual real do objeto.
+    /// </summary>
+    private float AnguloAtual
+    {
+        get => anguloOrbital + correcaoAtual;
+    }
 
     private void Start()
     {
-        BackToStart();
-        AtualizarOrbita();
-
         if (transform.parent != null)
             centro = transform.parent;
+
+        /*
+         * Na criação começa diretamente na posição correta.
+         */
+        anguloOrbital = anguloInicial;
+
+        correcaoAtual = 0f;
+        correcaoAlvo = 0f;
+
+        velocidadeCorrecao = 0f;
+        corrigindo = false;
+
+        AtualizarOrbita();
+        AtualizarRotacao();
     }
 
     public void BackToStart()
     {
-        anguloAtual = anguloInicial;
+        /*
+         * Posição real neste momento.
+         */
+        float anguloAtualReal = AnguloAtual;
+
+        /*
+         * Descobre quanto precisamos andar PARA FRENTE
+         * até encontrar o ângulo inicial.
+         *
+         * Exemplo:
+         *
+         * atual = 350
+         * alvo  = 20
+         *
+         * distância = 30
+         *
+         * Portanto o alvo real será 380.
+         */
+        float anguloNormalizado = Mathf.Repeat(anguloAtualReal, 360f);
+
+        float distancia = Mathf.Repeat(anguloInicial - anguloNormalizado, 360f);
+
+        /*
+         * Se já está praticamente no lugar,
+         * não precisa corrigir.
+         */
+        if (distancia < 0.01f)
+        {
+            correcaoAlvo = correcaoAtual;
+            velocidadeCorrecao = 0f;
+            corrigindo = false;
+
+            return;
+        }
+
+        /*
+         * Cria um alvo ABSOLUTO à frente.
+         */
+        float anguloAlvoReal = anguloAtualReal + distancia;
+
+        /*
+         * Converte esse alvo em uma correção de fase.
+         *
+         * O anguloOrbital continua andando normalmente.
+         */
+        correcaoAlvo = anguloAlvoReal - anguloOrbital;
+
+        /*
+         * Faz a nova correção partir do estado atual.
+         */
+        velocidadeCorrecao = 0f;
+        corrigindo = true;
     }
 
     private void Update()
@@ -50,50 +141,66 @@ public class OrbitalMovement : MonoBehaviour
         if (centro == null)
             return;
 
-        // Movimento orbital
-        anguloAtual += velocidade * Time.deltaTime;
+        /*
+         * A órbita PRINCIPAL sempre anda para frente.
+         */
+        anguloOrbital += velocidade * Time.deltaTime;
 
-        if (anguloAtual >= 360f)
-            anguloAtual -= 360f;
+        /*
+         * Agora corrigimos somente a fase.
+         */
+        if (corrigindo)
+        {
+            correcaoAtual = Mathf.SmoothDamp(
+                correcaoAtual,
+                correcaoAlvo,
+                ref velocidadeCorrecao,
+                tempoInterpolacao,
+                velocidadeMaximaCorrecao,
+                Time.deltaTime
+            );
+
+            /*
+             * Quando estiver suficientemente próximo,
+             * fixa exatamente no alvo.
+             */
+            if (Mathf.Abs(correcaoAtual - correcaoAlvo) < 0.01f)
+            {
+                correcaoAtual = correcaoAlvo;
+
+                velocidadeCorrecao = 0f;
+                corrigindo = false;
+            }
+        }
 
         AtualizarOrbita();
 
-        // Rotação do objeto
         if (olharParaOCentro)
-        {
             AtualizarRotacao();
-        }
     }
 
     private void AtualizarOrbita()
     {
-        // Converte o ângulo da órbita para radianos
-        float angulo = anguloAtual * Mathf.Deg2Rad;
+        float angulo = AnguloAtual * Mathf.Deg2Rad;
 
-        // Cria a posição em uma órbita circular no plano XZ
         Vector3 posicao = new Vector3(Mathf.Cos(angulo) * raio, 0f, Mathf.Sin(angulo) * raio);
 
-        // Rotaciona o plano da órbita
         Quaternion rotacao = Quaternion.Euler(rotacaoOrbita);
 
         posicao = rotacao * posicao;
 
-        // Posiciona o objeto em relação ao centro
         transform.position = centro.position + posicao;
     }
 
     private void AtualizarRotacao()
     {
-        // Direção do objeto para o centro
         Vector3 direcao = centro.position - transform.position;
 
         if (direcao.sqrMagnitude < 0.001f)
             return;
 
-        // Faz o objeto olhar para o centro
         Quaternion rotacao = Quaternion.LookRotation(direcao.normalized, Vector3.up);
 
-        // Permite corrigir a orientação do modelo
         rotacao *= Quaternion.Euler(offsetRotacao);
 
         transform.rotation = rotacao;
@@ -104,7 +211,6 @@ public class OrbitalMovement : MonoBehaviour
         if (centro == null)
             return;
 
-        // Mostra visualmente a órbita no editor
         Gizmos.color = Color.cyan;
 
         Quaternion rotacao = Quaternion.Euler(rotacaoOrbita);
@@ -123,9 +229,7 @@ public class OrbitalMovement : MonoBehaviour
             posicao += centro.position;
 
             if (i > 0)
-            {
                 Gizmos.DrawLine(anterior, posicao);
-            }
 
             anterior = posicao;
         }

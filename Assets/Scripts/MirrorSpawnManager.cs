@@ -7,6 +7,9 @@ public class MirrorSpawnManager : MonoBehaviour
     private GameObject _mirrorPrefab;
 
     [SerializeField]
+    private GameObject _sunMesh;
+
+    [SerializeField]
     private int _ringCount = 12;
 
     // Cada índice representa um ring.

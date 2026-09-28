@@ -131,5 +131,7 @@ MonoBehaviour:
   velocidade: 60
   rotacaoOrbita: {x: 0, y: 0, z: 0}
   anguloInicial: 0
+  tempoInterpolacao: 0.25
+  velocidadeMaximaCorrecao: 1000000
   olharParaOCentro: 1
   offsetRotacao: {x: 0, y: 0, z: 0}
