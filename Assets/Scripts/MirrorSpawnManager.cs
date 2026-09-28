@@ -1,28 +1,54 @@
 using System.Collections.Generic;
+using DG.Tweening;
 using UnityEngine;
 
 public class MirrorSpawnManager : MonoBehaviour
 {
+    [Header("Ring Acceleration")]
+    [SerializeField]
+    private float _ringSpeedMultiplier = 2f;
+
+    [SerializeField]
+    private float _ringAccelerationDuration = 0.15f;
+
+    [SerializeField]
+    private float _ringDecelerationDuration = 0.5f;
+
+    [Header("Prefabs")]
     [SerializeField]
     private GameObject _mirrorPrefab;
 
     [SerializeField]
     private GameObject _sunMesh;
 
+    [Header("Rings")]
     [SerializeField]
     private int _ringCount = 12;
-
-    // Cada índice representa um ring.
-    private List<List<OrbitalMovement>> _mirrorMovements = new();
-
-    // Referência para a lista do ring atual.
-    private List<OrbitalMovement> _currentMirrorMovements;
 
     [SerializeField]
     private int _currentMaxMirrorsInRing = 5;
 
     [SerializeField]
     private int _absoluteMaxMirrorsInRing = 50;
+
+    [Header("Sun Bonk")]
+    [SerializeField]
+    private Vector3 _sunPunchScale = new Vector3(0.15f, 0.15f, 0.15f);
+
+    [SerializeField]
+    private float _sunBonkDuration = 0.16f;
+
+    [SerializeField]
+    private int _sunBonkVibrato = 4;
+
+    [SerializeField, Range(0f, 1f)]
+    private float _sunBonkElasticity = 0.5f;
+
+    // Cada índice representa um ring.
+    private List<List<OrbitalMovement>> _mirrorMovements = new();
+
+    // Referência para a lista do ring atual.
+    private List<OrbitalMovement> _currentMirrorMovements;
 
     private int _currentRingIndex = 0;
 
@@ -31,10 +57,24 @@ public class MirrorSpawnManager : MonoBehaviour
     // Vetores dos rings.
     private Vector3[] _ringVectors;
 
+    private Tween _sunBonkTween;
+
+    private Vector3 _sunBaseScale;
+
     private void Start()
     {
         GenerateRingVectors();
         InitializeMirrorLists();
+
+        InitializeSun();
+    }
+
+    private void InitializeSun()
+    {
+        if (_sunMesh == null)
+            return;
+
+        _sunBaseScale = _sunMesh.transform.localScale;
     }
 
     private void GenerateRingVectors()
@@ -99,7 +139,7 @@ public class MirrorSpawnManager : MonoBehaviour
         if (_currentMirrorMovements == null)
             return;
 
-        // Ainda não atingiu o limite do ring atual.
+        // Ainda tem espaço no ring atual.
         if (_currentMirrorMovements.Count < _currentMaxMirrorsInRing)
             return;
 
@@ -140,6 +180,9 @@ public class MirrorSpawnManager : MonoBehaviour
         if (_ringVectors.Length == 0)
             return;
 
+        if (amount <= 0)
+            return;
+
         for (int i = 0; i < amount; i++)
         {
             OrbitalMovement mirrorMovement = Instantiate(_mirrorPrefab, transform)
@@ -160,6 +203,8 @@ public class MirrorSpawnManager : MonoBehaviour
             if (_maxCapacity)
                 break;
         }
+
+        AddMirrorAnimation();
     }
 
     private void UpdateInitialAngles()
@@ -309,6 +354,109 @@ public class MirrorSpawnManager : MonoBehaviour
         _currentMirrorMovements = _mirrorMovements[0];
 
         ManageMirrorLists();
+    }
+
+    private void AddMirrorAnimation()
+    {
+        QueueSunBonk();
+        AnimateAllRingsAcceleration(); // can be done via event system
+    }
+
+    // =========================================================
+    // SUN BONK
+    // =========================================================
+
+    private void QueueSunBonk()
+    {
+        if (_sunMesh == null)
+            return;
+
+        // Cancela imediatamente o bonk atual.
+        if (_sunBonkTween != null && _sunBonkTween.IsActive())
+        {
+            _sunBonkTween.Kill();
+            _sunBonkTween = null;
+        }
+
+        PlaySunBonk();
+    }
+
+    private void PlaySunBonk()
+    {
+        if (_sunMesh == null)
+            return;
+
+        Transform sunTransform = _sunMesh.transform;
+
+        // Sempre começa o novo bonk da escala original.
+        sunTransform.localScale = _sunBaseScale;
+
+        _sunBonkTween = sunTransform
+            .DOPunchScale(_sunPunchScale, _sunBonkDuration, _sunBonkVibrato, _sunBonkElasticity)
+            .SetEase(Ease.OutQuad)
+            .OnComplete(() =>
+            {
+                // Garante que termina exatamente na escala original.
+                sunTransform.localScale = _sunBaseScale;
+
+                _sunBonkTween = null;
+            });
+    }
+
+    // =========================================================
+    // RING ANIMATION
+    // =========================================================
+
+    private void AnimateAllRingsAcceleration()
+    {
+        foreach (List<OrbitalMovement> ring in _mirrorMovements)
+        {
+            foreach (OrbitalMovement mirror in ring)
+            {
+                if (mirror == null)
+                    continue;
+
+                /*
+                 * Mata somente a animação de velocidade
+                 * desse mirror.
+                 *
+                 * Se o jogador estiver spamando e a
+                 * aceleração for chamada novamente,
+                 * ela parte da velocidade atual.
+                 */
+                DOTween.Kill(mirror, false);
+
+                DOTween
+                    .To(
+                        () => mirror.MultiplicadorVelocidade,
+                        value => mirror.SetMultiplicadorVelocidade(value),
+                        _ringSpeedMultiplier,
+                        _ringAccelerationDuration
+                    )
+                    .SetEase(Ease.OutQuad)
+                    .SetId(mirror)
+                    .OnComplete(() =>
+                    {
+                        DOTween
+                            .To(
+                                () => mirror.MultiplicadorVelocidade,
+                                value => mirror.SetMultiplicadorVelocidade(value),
+                                1f,
+                                _ringDecelerationDuration
+                            )
+                            .SetEase(Ease.OutQuad)
+                            .SetId(mirror);
+                    });
+            }
+        }
+    }
+
+    private void OnDestroy()
+    {
+        if (_sunBonkTween != null && _sunBonkTween.IsActive())
+        {
+            _sunBonkTween.Kill();
+        }
     }
 
     private void OnValidate()

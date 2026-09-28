@@ -2,6 +2,10 @@ using UnityEngine;
 
 public class OrbitalMovement : MonoBehaviour
 {
+    private float multiplicadorVelocidade = 1f;
+
+    public float MultiplicadorVelocidade => multiplicadorVelocidade;
+
     [Header("Referência")]
     [SerializeField]
     public Transform centro;
@@ -144,7 +148,7 @@ public class OrbitalMovement : MonoBehaviour
         /*
          * A órbita PRINCIPAL sempre anda para frente.
          */
-        anguloOrbital += velocidade * Time.deltaTime;
+        anguloOrbital += velocidade * multiplicadorVelocidade * Time.deltaTime;
 
         /*
          * Agora corrigimos somente a fase.
@@ -233,5 +237,10 @@ public class OrbitalMovement : MonoBehaviour
 
             anterior = posicao;
         }
+    }
+
+    public void SetMultiplicadorVelocidade(float valor)
+    {
+        multiplicadorVelocidade = valor;
     }
 }
