@@ -9,9 +9,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 3964752458903148430}
-  - component: {fileID: 6513887272722243309}
-  - component: {fileID: 9158470576299814717}
-  - component: {fileID: 6874825941002379186}
   - component: {fileID: 7951362786364358370}
   m_Layer: 0
   m_Name: Mirror
@@ -28,28 +25,84 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 375492243357778685}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.13186787, y: 0.10088653, z: 0.013492209, w: 0.9860278}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 2.66, y: 2.47835, z: -4.04}
-  m_LocalScale: {x: 0.02, y: 0.02, z: 0.02}
+  m_LocalScale: {x: 0.015, y: 0.015, z: 0.015}
   m_ConstrainProportionsScale: 1
-  m_Children: []
+  m_Children:
+  - {fileID: 6735695550551549498}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!33 &6513887272722243309
+--- !u!114 &7951362786364358370
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 375492243357778685}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6c522ead39c7d485dbab6ab470d8223f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::OrbitalMovement
+  centro: {fileID: 0}
+  raio: 4.5
+  velocidade: 60
+  rotacaoOrbita: {x: 0, y: 0, z: 0}
+  anguloInicial: 0
+  tempoInterpolacao: 0.25
+  velocidadeMaximaCorrecao: 1000000
+  olharParaOCentro: 1
+  offsetRotacao: {x: 0, y: 0, z: 0}
+--- !u!1 &5509633572771719080
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 6735695550551549498}
+  - component: {fileID: 32322852076437623}
+  - component: {fileID: 7364761115833284092}
+  - component: {fileID: 7067721717658997817}
+  m_Layer: 0
+  m_Name: Mesh
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &6735695550551549498
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5509633572771719080}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0.5, y: 0.5, z: 0.5, w: 0.5}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 3964752458903148430}
+  m_LocalEulerAnglesHint: {x: 0, y: 90, z: 90}
+--- !u!33 &32322852076437623
 MeshFilter:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 375492243357778685}
-  m_Mesh: {fileID: 10210, guid: 0000000000000000e000000000000000, type: 0}
---- !u!23 &9158470576299814717
+  m_GameObject: {fileID: 5509633572771719080}
+  m_Mesh: {fileID: -2794067383335433913, guid: 97d7d0161361e48b38185891d7ebdd47, type: 3}
+--- !u!23 &7364761115833284092
 MeshRenderer:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 375492243357778685}
+  m_GameObject: {fileID: 5509633572771719080}
   m_Enabled: 1
   m_CastShadows: 0
   m_ReceiveShadows: 1
@@ -92,13 +145,13 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
---- !u!64 &6874825941002379186
+--- !u!64 &7067721717658997817
 MeshCollider:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 375492243357778685}
+  m_GameObject: {fileID: 5509633572771719080}
   m_Material: {fileID: 0}
   m_IncludeLayers:
     serializedVersion: 2
@@ -109,29 +162,8 @@ MeshCollider:
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
   m_ProvidesContacts: 0
-  m_Enabled: 1
+  m_Enabled: 0
   serializedVersion: 5
   m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: 10210, guid: 0000000000000000e000000000000000, type: 0}
---- !u!114 &7951362786364358370
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 375492243357778685}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 6c522ead39c7d485dbab6ab470d8223f, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::OrbitalMovement
-  centro: {fileID: 0}
-  raio: 4.5
-  velocidade: 60
-  rotacaoOrbita: {x: 0, y: 0, z: 0}
-  anguloInicial: 0
-  tempoInterpolacao: 0.25
-  velocidadeMaximaCorrecao: 1000000
-  olharParaOCentro: 1
-  offsetRotacao: {x: 0, y: 0, z: 0}
