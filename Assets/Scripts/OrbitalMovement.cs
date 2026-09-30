@@ -1,3 +1,4 @@
+using DG.Tweening;
 using UnityEngine;
 
 public class OrbitalMovement : MonoBehaviour
@@ -10,9 +11,18 @@ public class OrbitalMovement : MonoBehaviour
     [SerializeField]
     public Transform centro;
 
+    [SerializeField]
+    public Transform mesh;
+
     [Header("Órbita")]
     [SerializeField]
     private float raio = 5f;
+
+    [SerializeField]
+    private Vector3 _mirrorRelativePosition = new Vector3(0, 0, -200);
+
+    [SerializeField]
+    private float _mirrorStartAnimationDuration = 2.5f;
 
     [Tooltip("Velocidade angular em graus por segundo")]
     [SerializeField]
@@ -82,6 +92,9 @@ public class OrbitalMovement : MonoBehaviour
 
         AtualizarOrbita();
         AtualizarRotacao();
+
+        mesh.localPosition = _mirrorRelativePosition;
+        mesh.DOLocalMove(Vector3.zero, _mirrorStartAnimationDuration);
     }
 
     public void BackToStart()

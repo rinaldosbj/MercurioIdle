@@ -46,6 +46,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::OrbitalMovement
   centro: {fileID: 0}
+  mesh: {fileID: 6735695550551549498}
   raio: 4.5
   velocidade: 60
   rotacaoOrbita: {x: 0, y: 0, z: 0}
