@@ -19,6 +19,7 @@ namespace MercurioIdle.Planet
         [SerializeField, Tooltip("Ângulo da região visitada em graus.")] private double angleDegrees = 90;
         [SerializeField, Min(0), Tooltip("Distância da origem abaixo da superfície, em metros.")] private float depthMeters = 5;
         [SerializeField, Range(2, 30), Tooltip("Meia extensão da região de teste em metros.")] private float extentMeters = 15;
+        [SerializeField, Tooltip("Modo de teste: remove o bloco clicado na hora. Deixe desligado para os minions escavarem os blocos marcados.")] private bool removeBlocksOnClick = false;
         private PlanetLevel level;
         private PlanetProjection projection;
         private Mesh mesh;
@@ -95,7 +96,7 @@ namespace MercurioIdle.Planet
             try
             {
                 // Cliques de seleção no Editor não escavam o terreno.
-                var mouse = Application.IsPlaying(gameObject) ? Mouse.current : null;
+                var mouse = removeBlocksOnClick && Application.IsPlaying(gameObject) ? Mouse.current : null;
                 if (mouse != null && mouse.leftButton.wasPressedThisFrame &&
                     projection.TryScreenToPlanet(mouse.position.ReadValue(), out var position) &&
                     level.TryGetBlock(position, out var block)) level.RemoveBlock(block);

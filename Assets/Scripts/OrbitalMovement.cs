@@ -50,7 +50,6 @@ public class OrbitalMovement : MonoBehaviour
         if (centro == null)
             return;
 
-        // Movimento orbital
         anguloAtual += velocidade * Time.deltaTime;
 
         if (anguloAtual >= 360f)
@@ -67,10 +66,8 @@ public class OrbitalMovement : MonoBehaviour
 
     private void AtualizarOrbita()
     {
-        // Converte o ângulo da órbita para radianos
         float angulo = anguloAtual * Mathf.Deg2Rad;
 
-        // Cria a posição em uma órbita circular no plano XZ
         Vector3 posicao = new Vector3(Mathf.Cos(angulo) * raio, 0f, Mathf.Sin(angulo) * raio);
 
         // Rotaciona o plano da órbita
@@ -78,22 +75,18 @@ public class OrbitalMovement : MonoBehaviour
 
         posicao = rotacao * posicao;
 
-        // Posiciona o objeto em relação ao centro
         transform.position = centro.position + posicao;
     }
 
     private void AtualizarRotacao()
     {
-        // Direção do objeto para o centro
         Vector3 direcao = centro.position - transform.position;
 
         if (direcao.sqrMagnitude < 0.001f)
             return;
 
-        // Faz o objeto olhar para o centro
         Quaternion rotacao = Quaternion.LookRotation(direcao.normalized, Vector3.up);
 
-        // Permite corrigir a orientação do modelo
         rotacao *= Quaternion.Euler(offsetRotacao);
 
         transform.rotation = rotacao;
@@ -104,7 +97,6 @@ public class OrbitalMovement : MonoBehaviour
         if (centro == null)
             return;
 
-        // Mostra visualmente a órbita no editor
         Gizmos.color = Color.cyan;
 
         Quaternion rotacao = Quaternion.Euler(rotacaoOrbita);

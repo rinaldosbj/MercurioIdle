@@ -9,10 +9,8 @@ public class MirrorSpawnManager : MonoBehaviour
     [SerializeField]
     private int _ringCount = 12;
 
-    // Cada índice representa um ring.
     private List<List<OrbitalMovement>> _mirrorMovements = new();
 
-    // Referência para a lista do ring atual.
     private List<OrbitalMovement> _currentMirrorMovements;
 
     [SerializeField]
@@ -61,7 +59,6 @@ public class MirrorSpawnManager : MonoBehaviour
 
                 angle = step * angleStep;
 
-                // Alterna entre positivo e negativo.
                 if (i % 2 == 0)
                     angle *= -1f;
             }
@@ -96,14 +93,11 @@ public class MirrorSpawnManager : MonoBehaviour
         if (_currentMirrorMovements == null)
             return;
 
-        // Ainda não atingiu o limite do ring atual.
         if (_currentMirrorMovements.Count < _currentMaxMirrorsInRing)
             return;
 
-        // Vai para o próximo ring.
         _currentRingIndex++;
 
-        // Se passou do último ring, volta para o primeiro.
         if (_currentRingIndex >= _ringVectors.Length)
         {
             _currentRingIndex = 0;
@@ -116,10 +110,8 @@ public class MirrorSpawnManager : MonoBehaviour
                 return;
             }
 
-            // Dobra a capacidade.
             _currentMaxMirrorsInRing *= 2;
 
-            // Nunca ultrapassa o máximo absoluto.
             if (_currentMaxMirrorsInRing > _absoluteMaxMirrorsInRing)
             {
                 _currentMaxMirrorsInRing = _absoluteMaxMirrorsInRing;
@@ -186,13 +178,10 @@ public class MirrorSpawnManager : MonoBehaviour
         // Atualiza a quantidade de rings.
         _ringCount = amount;
 
-        // Gera os novos vetores.
         GenerateRingVectors();
 
-        // Recria as listas dos rings.
         InitializeMirrorLists();
 
-        // Redistribui os mirrors existentes.
         RedistributeMirrors(existingMirrors);
     }
 
@@ -222,21 +211,6 @@ public class MirrorSpawnManager : MonoBehaviour
         if (_ringVectors.Length == 0)
             return;
 
-        /*
-         * Distribui os mirrors de forma equilibrada.
-         *
-         * Exemplo:
-         *
-         * 10 mirrors / 3 rings
-         *
-         * Ring 0 -> 4
-         * Ring 1 -> 3
-         * Ring 2 -> 3
-         *
-         * O operador % faz o ciclo:
-         *
-         * 0, 1, 2, 0, 1, 2, 0, 1, 2...
-         */
 
         for (int i = 0; i < mirrors.Count; i++)
         {
@@ -254,10 +228,8 @@ public class MirrorSpawnManager : MonoBehaviour
             mirror.rotacaoOrbita = _ringVectors[ringIndex];
         }
 
-        // Atualiza os ângulos de TODOS os rings.
         UpdateAllRingAngles();
 
-        // Procura o próximo ring que ainda tem espaço.
         UpdateCurrentRing();
     }
 
@@ -299,8 +271,6 @@ public class MirrorSpawnManager : MonoBehaviour
             }
         }
 
-        // Se todos estão cheios, deixa o ManageMirrorLists()
-        // determinar a próxima etapa.
         _currentRingIndex = 0;
 
         _currentMirrorMovements = _mirrorMovements[0];
