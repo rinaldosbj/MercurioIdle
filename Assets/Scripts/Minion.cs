@@ -3,108 +3,121 @@ using MercurioIdle.Planet;
 
 namespace MercurioIdle.Robots
 {
-    /// <summary>
-    /// Minion: anda pela superfície com gravidade (cai em direção ao centro do planeta),
-    /// passeia sem sair da tela e, quando há blocos marcados, voa até eles e escava.
-    /// Mostra uma linha tracejada com um ponto indicando para onde está indo.
-    /// Use este script no prefab do minion (precisa de um SpriteRenderer).
-    /// </summary>
     [RequireComponent(typeof(SpriteRenderer))]
     public sealed class Minion : MonoBehaviour
     {
         private enum State { Pause, Wander, GoToBlock, Mining }
 
-        [Header("Andar na superfície")]
-        [SerializeField] private float wanderSpeed = 1.5f;
-        [SerializeField, Tooltip("Distância máxima (m) de cada passeio a partir do ponto de referência.")]
-        private float wanderRadius = 3f;
-        [SerializeField, Tooltip("Tempo parado entre um passeio e outro: mínimo e máximo (s).")]
-        private Vector2 pauseSeconds = new Vector2(0.5f, 2f);
-        [SerializeField, Tooltip("Folga (m) entre o minion e a borda da tela.")]
-        private float screenMargin = 1f;
+        private const int TextureSize = 96;
+        private const float SpriteWorldSize = 0.6f;
+        private const float TurnSeconds = 0.07f;
+        private const float PulsePeriod = 0.3f;
+        private const float PulseAmount = 0.35f;
+        private const float SpawnSeconds = 0.5f;
 
-        [Header("Gravidade")]
-        [SerializeField, Tooltip("Aceleração da queda (m/s²).")]
-        private float gravity = 20f;
-        [SerializeField, Tooltip("Velocidade máxima de queda (m/s).")]
-        private float maxFallSpeed = 20f;
+        [Header("Movimento")]
+        [SerializeField] private float flySpeed = 3.5f;
+        [SerializeField] private float wanderSpeed = 2f;
+        [SerializeField] private float arriveDistance = 0.08f;
+        [SerializeField] private float searchSeconds = 0.25f;
 
-        [Header("Escavar")]
-        [SerializeField, Tooltip("Velocidade de voo até o bloco marcado.")]
-        private float digSpeed = 4f;
-        [SerializeField, Tooltip("Segundos para quebrar um bloco.")]
-        private float mineSeconds = 1f;
-        [SerializeField, Tooltip("Distância (m) do centro do bloco para começar a minerar.")]
-        private float reach = 0.8f;
-        [SerializeField, Tooltip("Intervalo (s) entre buscas por blocos marcados.")]
-        private float searchInterval = 0.5f;
+        [Header("Passeio")]
+        [SerializeField] private float wanderRadius = 4f;
+        [SerializeField] private float minWanderDistance = 1f;
+        [SerializeField] private Vector2 pauseSeconds = new Vector2(0.4f, 1.6f);
+        [SerializeField] private float screenMargin = 1f;
+
+        [Header("Escavação")]
+        [SerializeField] private float digSeconds = 1.2f;
 
         [Header("Caminho")]
-        [SerializeField, Tooltip("Mostra uma linha tracejada e um ponto no destino.")]
-        private bool showPath = true;
+        [SerializeField] private bool showPath = true;
         [SerializeField] private float pathWidth = 0.08f;
-        [SerializeField] private Color walkPathColor = new Color(0.4f, 0.9f, 1f, 0.9f);
-        [SerializeField] private Color digPathColor = new Color(1f, 0.8f, 0.2f, 0.95f);
+        [SerializeField] private Color wanderPathColor = new Color(0.71f, 0.71f, 0.71f, 0.85f);
+        [SerializeField] private Color digPathColor = new Color(0.95f, 0.95f, 0.95f, 1f);
 
         [Header("Visual")]
-        [SerializeField, Tooltip("Marque se o desenho do sprite olha para a direita. Se ele andar de costas, desmarque.")]
-        private bool spriteFacesRight = true;
+        [SerializeField] private bool useDefaultTriangle = true;
+        [SerializeField] private float size = 0.6f;
+
+        private static Sprite triangleSprite;
+        private static Texture2D dashTexture;
+        private static Sprite dotSprite;
 
         private SpriteRenderer spriteRenderer;
         private Camera cam;
+        private Vector3 baseScale = Vector3.one;
         private State state = State.Pause;
 
-        // Terreno (atualizado a cada frame)
-        private PlanetExcavationPreview terrain;
-        private IPlanetLevel level;
-        private PlanetProjection projection;
-        private Vector3 up = Vector3.up;       // "para cima" = contra o centro do planeta
-        private Vector3 right = Vector3.right; // ao longo da superfície
-
-        // Corpo
-        private float feetOffset;  // do centro do sprite até os pés
-        private float halfWidth;
-        private float fallSpeed;
-
-        // Passeio
-        private Vector3 anchor;
+        private Vector3 home;
+        private bool homeAssigned;
         private Vector3 wanderTarget;
         private float pauseTimer;
 
-        // Trabalho
         private IPlanetBlock job;
         private IPlanetLevel jobLevel;
         private Vector3 jobWorld;
-        private float progress;
+        private float digProgress;
         private float searchTimer;
         private int lastMarksVersion;
 
-        // Indicador de caminho
+        private float currentAngle = -180f;
+        private float desiredAngle;
+        private float pulseTime;
+        private float bornTime;
+
         private GameObject pathRoot;
         private LineRenderer pathLine;
         private SpriteRenderer pathMarker;
         private Material pathMaterial;
         private bool pathVisible;
-        private static Texture2D dashTexture;
-        private static Sprite dotSprite;
+
+        public void SetHome(Vector3 position)
+        {
+            home = position;
+            homeAssigned = true;
+        }
 
         private void Awake()
         {
             spriteRenderer = GetComponent<SpriteRenderer>();
-            spriteRenderer.sortingOrder = 10;
             cam = Camera.main;
+
+            if (useDefaultTriangle || spriteRenderer.sprite == null)
+            {
+                spriteRenderer.sprite = GetTriangleSprite();
+                spriteRenderer.color = Color.white;
+                baseScale = Vector3.one * (size / SpriteWorldSize);
+            }
+            else
+            {
+                baseScale = transform.localScale;
+            }
+
+            spriteRenderer.enabled = true;
+            spriteRenderer.sortingOrder = 10;
+            bornTime = Time.time;
+            transform.localScale = Vector3.zero;
+
             BuildPathVisuals();
         }
 
         private void Start()
         {
-            anchor = transform.position;
-            pauseTimer = Random.Range(0f, pauseSeconds.y);
+            var designations = DigDesignations.Instance;
+            if (designations != null && designations.Terrain != null)
+            {
+                float frontZ = designations.Terrain.transform.position.z - 0.5f;
+                Vector3 current = transform.position;
+                if (current.z > frontZ)
+                {
+                    current.z = frontZ;
+                    transform.position = current;
+                }
+            }
 
-            // Tamanho do corpo tirado do sprite (já considera a escala do prefab)
-            Bounds bounds = spriteRenderer.bounds;
-            feetOffset = Mathf.Max(0f, transform.position.y - bounds.min.y);
-            halfWidth = bounds.extents.x;
+            if (!homeAssigned) home = transform.position;
+            pauseTimer = Random.Range(0f, pauseSeconds.y);
         }
 
         private void OnDisable() => CancelJob();
@@ -118,194 +131,159 @@ namespace MercurioIdle.Robots
         private void Update()
         {
             var designations = DigDesignations.Instance;
-            terrain = designations != null ? designations.Terrain : null;
-            level = terrain != null ? terrain.Level : null;
-            projection = terrain != null ? terrain.Projection as PlanetProjection : null;
-            ComputeFrame();
+            var level = designations != null && designations.Terrain != null ? designations.Terrain.Level : null;
 
             pathVisible = false;
 
-            // O trabalho acabou: bloco removido, desmarcado, ou o terreno foi regenerado.
             if (job != null && (level == null || level != jobLevel || job.IsRemoved || !designations.IsMarked(job)))
+            {
                 CancelJob();
+                state = State.Pause;
+                pauseTimer = 0f;
+            }
 
-            // Sem trabalho: ver se há algum bloco marcado e disponível
             if (job == null && level != null)
             {
                 searchTimer -= Time.deltaTime;
                 if (designations.Version != lastMarksVersion)
                 {
-                    lastMarksVersion = designations.Version; // bloco novo marcado: reage na hora
+                    lastMarksVersion = designations.Version;
                     searchTimer = 0f;
                 }
+
                 if (searchTimer <= 0f)
                 {
-                    searchTimer = searchInterval;
+                    searchTimer = searchSeconds;
                     if (designations.TryClaimNearest(transform.position, out var block, out var world))
                     {
                         job = block;
                         jobLevel = level;
                         jobWorld = world;
-                        progress = 0f;
-                        fallSpeed = 0f;
+                        digProgress = 0f;
                         state = State.GoToBlock;
                     }
                 }
             }
 
+            bool digging = false;
+
             switch (state)
             {
                 case State.Pause:
-                    ApplyGravity();
                     pauseTimer -= Time.deltaTime;
                     if (pauseTimer <= 0f)
                     {
-                        PickWanderTarget();
-                        state = State.Wander;
+                        if (PickWanderTarget()) state = State.Wander;
+                        else pauseTimer = Random.Range(pauseSeconds.x, pauseSeconds.y);
                     }
                     break;
 
                 case State.Wander:
-                    ApplyGravity();
-                    Walk();
+                    if (Reached(wanderTarget))
+                    {
+                        state = State.Pause;
+                        pauseTimer = Random.Range(pauseSeconds.x, pauseSeconds.y);
+                    }
+                    else
+                    {
+                        Fly(wanderTarget, wanderSpeed);
+                        ShowPath(transform.position, wanderTarget, wanderPathColor);
+                    }
                     break;
 
                 case State.GoToBlock:
-                    if (job == null) { state = State.Pause; pauseTimer = 0f; break; }
-                    if (Reached(jobWorld, reach)) { state = State.Mining; progress = 0f; }
+                    if (job == null)
+                    {
+                        state = State.Pause;
+                        pauseTimer = 0f;
+                        break;
+                    }
+
+                    if (Reached(jobWorld))
+                    {
+                        state = State.Mining;
+                        digProgress = 0f;
+                    }
                     else
                     {
-                        MoveToward(jobWorld, digSpeed);
+                        Fly(jobWorld, flySpeed);
                         ShowPath(transform.position, jobWorld, digPathColor);
                     }
                     break;
 
                 case State.Mining:
-                    if (job == null) { state = State.Pause; pauseTimer = 0f; break; }
-                    Face(jobWorld.x - transform.position.x);
-                    progress += Time.deltaTime;
-                    if (progress >= mineSeconds)
+                    if (job == null)
+                    {
+                        state = State.Pause;
+                        pauseTimer = 0f;
+                        break;
+                    }
+
+                    digging = true;
+                    desiredAngle = 180f;
+                    digProgress += Time.deltaTime;
+
+                    if (digProgress >= digSeconds)
                     {
                         jobLevel.RemoveBlock(job);
                         CancelJob();
-                        anchor = transform.position; // próximos passeios começam aqui
-                        fallSpeed = 0f;
+                        searchTimer = 0f;
                         state = State.Pause;
                         pauseTimer = 0f;
-                        searchTimer = 0f;            // procura o próximo bloco já
                     }
                     break;
             }
 
             if (!pathVisible) SetPathActive(false);
+            ApplyVisuals(digging);
         }
 
-        // ---------- Gravidade e andar ----------
-
-        // "Para cima" e "para o lado" seguindo a curvatura do planeta na posição do minion.
-        private void ComputeFrame()
+        private bool Reached(Vector3 target)
         {
-            up = Vector3.up;
-            right = Vector3.right;
-            if (terrain == null || projection == null) return;
-
-            Vector3 local = terrain.transform.InverseTransformPoint(transform.position);
-            PlanetPosition p = projection.FromLocal(new Vector3(local.x, local.y, 0f));
-            float c = (float)System.Math.Cos(p.AngleRadians);
-            float s = (float)System.Math.Sin(p.AngleRadians);
-            up = terrain.transform.TransformDirection(new Vector3(c, s, 0f));
-            right = terrain.transform.TransformDirection(new Vector3(s, -c, 0f));
+            Vector3 delta = target - transform.position;
+            return new Vector2(delta.x, delta.y).magnitude <= arriveDistance;
         }
 
-        // Existe bloco sólido neste ponto do mundo?
-        private bool IsSolid(Vector3 world)
-        {
-            if (level == null || projection == null) return false;
-            try
-            {
-                Vector3 local = terrain.transform.InverseTransformPoint(world);
-                PlanetPosition position = projection.FromLocal(new Vector3(local.x, local.y, 0f));
-                return level.TryGetBlock(position, out _);
-            }
-            catch (System.Exception)
-            {
-                return false;
-            }
-        }
-
-        private void ApplyGravity()
-        {
-            if (level == null || projection == null) return;
-
-            Vector3 feet = transform.position - up * feetOffset;
-
-            if (IsSolid(feet - up * 0.05f)) // chão logo abaixo dos pés
-            {
-                fallSpeed = 0f;
-                // se afundou um pouco no chão, empurra para cima
-                int guard = 0;
-                while (IsSolid(transform.position - up * feetOffset) && guard++ < 20)
-                    transform.position += up * 0.05f;
-                return;
-            }
-
-            fallSpeed = Mathf.Min(fallSpeed + gravity * Time.deltaTime, maxFallSpeed);
-            transform.position -= up * (fallSpeed * Time.deltaTime);
-        }
-
-        private void Walk()
-        {
-            float remaining = Vector3.Dot(wanderTarget - transform.position, right);
-            if (Mathf.Abs(remaining) <= 0.05f) { StartPause(); return; }
-
-            float direction = Mathf.Sign(remaining);
-            Face(right.x * direction);
-
-            // Parede à frente: para e escolhe outro rumo depois
-            Vector3 feet = transform.position - up * feetOffset;
-            Vector3 probe = feet + up * 0.3f + right * (direction * (halfWidth + 0.05f));
-            if (IsSolid(probe)) { StartPause(); return; }
-
-            float step = Mathf.Min(wanderSpeed * Time.deltaTime, Mathf.Abs(remaining));
-            transform.position += right * (direction * step);
-
-            remaining -= direction * step;
-            Vector3 from = transform.position - up * (feetOffset - 0.05f);
-            ShowPath(from, from + right * remaining, walkPathColor);
-        }
-
-        private void StartPause()
-        {
-            state = State.Pause;
-            pauseTimer = Random.Range(pauseSeconds.x, pauseSeconds.y);
-        }
-
-        private void PickWanderTarget()
-        {
-            float distance = Random.Range(wanderRadius * 0.25f, wanderRadius);
-            float side = Random.value < 0.5f ? -1f : 1f;
-            wanderTarget = ClampToScreen(anchor + right * (distance * side));
-        }
-
-        // ---------- Voo até o bloco ----------
-
-        private bool Reached(Vector3 target, float distance) =>
-            Vector2.Distance(transform.position, target) <= distance;
-
-        private void MoveToward(Vector3 target, float speed)
+        private void Fly(Vector3 target, float speed)
         {
             Vector3 position = transform.position;
-            Vector3 goal = new Vector3(target.x, target.y, position.z); // mantém o Z (fica na frente do terreno)
-            Face(goal.x - position.x);
-            transform.position = Vector3.MoveTowards(position, goal, speed * Time.deltaTime);
+            target.z = position.z;
+            Vector3 delta = target - position;
+            desiredAngle = Vector2.SignedAngle(Vector2.up, new Vector2(delta.x, delta.y));
+            transform.position = Vector3.MoveTowards(position, target, speed * Time.deltaTime);
         }
 
-        // Vira o sprite para o lado em que está indo
-        private void Face(float deltaX)
+        private bool PickWanderTarget()
         {
-            if (Mathf.Abs(deltaX) < 0.02f) return;
-            bool goingRight = deltaX > 0f;
-            spriteRenderer.flipX = spriteFacesRight ? !goingRight : goingRight;
+            for (int attempt = 0; attempt < 8; attempt++)
+            {
+                Vector2 offset = Random.insideUnitCircle * wanderRadius;
+                if (offset.magnitude < minWanderDistance) continue;
+
+                Vector3 candidate = home + new Vector3(offset.x, offset.y, 0f);
+                candidate.z = transform.position.z;
+                candidate = ClampToScreen(candidate);
+
+                if (!IsSolid(candidate))
+                {
+                    wanderTarget = candidate;
+                    return true;
+                }
+            }
+
+            if (IsSolid(home)) home = FindFreePointAbove(home);
+            return false;
+        }
+
+        private static Vector3 FindFreePointAbove(Vector3 point)
+        {
+            for (int step = 0; step < 160; step++)
+            {
+                if (!IsSolid(point)) return point;
+                point.y += 0.5f;
+            }
+
+            return point;
         }
 
         private Vector3 ClampToScreen(Vector3 point)
@@ -316,22 +294,87 @@ namespace MercurioIdle.Robots
             float depth = Mathf.Abs(point.z - cam.transform.position.z);
             Vector3 min = cam.ViewportToWorldPoint(new Vector3(0f, 0f, depth));
             Vector3 max = cam.ViewportToWorldPoint(new Vector3(1f, 1f, depth));
+
+            Vector3 here = transform.position;
+            if (here.x < min.x || here.x > max.x || here.y < min.y || here.y > max.y) return point;
+
             point.x = Mathf.Clamp(point.x, min.x + screenMargin, max.x - screenMargin);
             point.y = Mathf.Clamp(point.y, min.y + screenMargin, max.y - screenMargin);
             return point;
         }
 
-        // ---------- Trabalho ----------
+        private static bool IsSolid(Vector3 world)
+        {
+            var designations = DigDesignations.Instance;
+            if (designations == null || designations.Terrain == null) return false;
+
+            var terrain = designations.Terrain;
+            var level = terrain.Level;
+            var projection = terrain.Projection as PlanetProjection;
+            if (level == null || projection == null) return false;
+
+            try
+            {
+                Vector3 local = terrain.transform.InverseTransformPoint(world);
+                var position = projection.FromLocal(new Vector3(local.x, local.y, 0f));
+                return level.TryGetBlock(position, out _);
+            }
+            catch (System.Exception)
+            {
+                return false;
+            }
+        }
+
+        private void ApplyVisuals(bool digging)
+        {
+            float age = Time.time - bornTime;
+            if (age < SpawnSeconds)
+            {
+                float t = age / SpawnSeconds;
+                float scale;
+                float angle;
+                if (t < 0.6f)
+                {
+                    float k = Mathf.SmoothStep(0f, 1f, t / 0.6f);
+                    scale = Mathf.Lerp(0f, 1.7f, k);
+                    angle = Mathf.Lerp(-180f, 0f, k);
+                }
+                else
+                {
+                    scale = Mathf.Lerp(1.7f, 1f, Mathf.SmoothStep(0f, 1f, (t - 0.6f) / 0.4f));
+                    angle = 0f;
+                }
+
+                currentAngle = angle;
+                transform.localScale = baseScale * scale;
+                transform.rotation = Quaternion.Euler(0f, 0f, angle);
+                return;
+            }
+
+            currentAngle = Mathf.LerpAngle(currentAngle, desiredAngle, 1f - Mathf.Exp(-Time.deltaTime / TurnSeconds));
+            transform.rotation = Quaternion.Euler(0f, 0f, currentAngle);
+
+            float pulse = 1f;
+            if (digging)
+            {
+                pulseTime += Time.deltaTime;
+                pulse = 1f + PulseAmount * 0.5f * (1f - Mathf.Cos(2f * Mathf.PI * pulseTime / PulsePeriod));
+            }
+            else
+            {
+                pulseTime = 0f;
+            }
+
+            transform.localScale = baseScale * pulse;
+        }
 
         private void CancelJob()
         {
             if (job != null && DigDesignations.Instance != null) DigDesignations.Instance.Release(job);
             job = null;
             jobLevel = null;
-            progress = 0f;
+            digProgress = 0f;
         }
-
-        // ---------- Indicador de caminho ----------
 
         private void BuildPathVisuals()
         {
@@ -339,7 +382,6 @@ namespace MercurioIdle.Robots
 
             if (dashTexture == null)
             {
-                // 4x1: metade preenchida, metade vazia => tracejado de 0,5 m
                 dashTexture = new Texture2D(4, 1, TextureFormat.RGBA32, false)
                 {
                     wrapMode = TextureWrapMode.Repeat,
@@ -352,23 +394,25 @@ namespace MercurioIdle.Robots
 
             if (dotSprite == null)
             {
-                const int size = 16;
-                var texture = new Texture2D(size, size, TextureFormat.RGBA32, false)
+                const int dotSize = 16;
+                var texture = new Texture2D(dotSize, dotSize, TextureFormat.RGBA32, false)
                 {
                     filterMode = FilterMode.Point,
                     hideFlags = HideFlags.HideAndDontSave
                 };
-                var pixels = new Color[size * size];
-                float center = (size - 1) * 0.5f;
-                for (int y = 0; y < size; y++)
-                    for (int x = 0; x < size; x++)
+                var pixels = new Color[dotSize * dotSize];
+                float center = (dotSize - 1) * 0.5f;
+                for (int y = 0; y < dotSize; y++)
+                {
+                    for (int x = 0; x < dotSize; x++)
                     {
                         float distance = Mathf.Sqrt((x - center) * (x - center) + (y - center) * (y - center));
-                        pixels[y * size + x] = distance <= size * 0.5f - 0.5f ? Color.white : Color.clear;
+                        pixels[y * dotSize + x] = distance <= dotSize * 0.5f - 0.5f ? Color.white : Color.clear;
                     }
+                }
                 texture.SetPixels(pixels);
                 texture.Apply();
-                dotSprite = Sprite.Create(texture, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), size);
+                dotSprite = Sprite.Create(texture, new Rect(0, 0, dotSize, dotSize), new Vector2(0.5f, 0.5f), dotSize);
             }
 
             pathRoot = new GameObject("Minion path");
@@ -385,7 +429,7 @@ namespace MercurioIdle.Robots
 
             var markerObject = new GameObject("Destination");
             markerObject.transform.SetParent(pathRoot.transform, false);
-            markerObject.transform.localScale = Vector3.one * 0.35f;
+            markerObject.transform.localScale = Vector3.one * 0.25f;
             pathMarker = markerObject.AddComponent<SpriteRenderer>();
             pathMarker.sprite = dotSprite;
             pathMarker.sortingOrder = 9;
@@ -413,6 +457,44 @@ namespace MercurioIdle.Robots
         private void SetPathActive(bool active)
         {
             if (pathRoot != null && pathRoot.activeSelf != active) pathRoot.SetActive(active);
+        }
+
+        private static Sprite GetTriangleSprite()
+        {
+            if (triangleSprite != null) return triangleSprite;
+
+            var texture = new Texture2D(TextureSize, TextureSize, TextureFormat.RGBA32, false)
+            {
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp,
+                hideFlags = HideFlags.HideAndDontSave
+            };
+
+            const int samples = 4;
+            var pixels = new Color[TextureSize * TextureSize];
+            for (int y = 0; y < TextureSize; y++)
+            {
+                for (int x = 0; x < TextureSize; x++)
+                {
+                    int covered = 0;
+                    for (int sy = 0; sy < samples; sy++)
+                    {
+                        for (int sx = 0; sx < samples; sx++)
+                        {
+                            float u = (x + (sx + 0.5f) / samples) / TextureSize;
+                            float v = (y + (sy + 0.5f) / samples) / TextureSize;
+                            if (v <= 1f - Mathf.Abs(2f * u - 1f)) covered++;
+                        }
+                    }
+
+                    pixels[y * TextureSize + x] = new Color(0.949f, 0.949f, 0.949f, covered / (float)(samples * samples));
+                }
+            }
+
+            texture.SetPixels(pixels);
+            texture.Apply();
+            triangleSprite = Sprite.Create(texture, new Rect(0, 0, TextureSize, TextureSize), new Vector2(0.5f, 0.5f), TextureSize / SpriteWorldSize);
+            return triangleSprite;
         }
     }
 }
