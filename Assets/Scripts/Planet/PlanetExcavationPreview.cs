@@ -20,6 +20,7 @@ namespace MercurioIdle.Planet
         [SerializeField, Min(0), Tooltip("Distância da origem abaixo da superfície, em metros.")] private float depthMeters = 5;
         [SerializeField, Range(2, 30), Tooltip("Meia extensão da região de teste em metros.")] private float extentMeters = 15;
         [SerializeField, Tooltip("Modo de teste: remove o bloco clicado na hora. Deixe desligado para os minions escavarem os blocos marcados.")] private bool removeBlocksOnClick = false;
+        [SerializeField, Tooltip("Desenha a janela fixa de teste. O PlanetChunkStreamer desliga isso durante o Play e desenha por chunks.")] private bool drawLocalWindow = true;
         private PlanetLevel level;
         private PlanetProjection projection;
         private Mesh mesh;
@@ -35,6 +36,18 @@ namespace MercurioIdle.Planet
 
         public IPlanetLevel Level => level;
         public IPlanetProjection Projection => projection;
+
+        /// <summary>Liga/desliga a janela fixa de teste (recria o level na próxima atualização).</summary>
+        public bool DrawLocalWindow
+        {
+            get => drawLocalWindow;
+            set
+            {
+                if (drawLocalWindow == value) return;
+                drawLocalWindow = value;
+                regenerationRequested = true;
+            }
+        }
 
         private void OnEnable() => regenerationRequested = true;
 
@@ -67,19 +80,22 @@ namespace MercurioIdle.Planet
                 double halfAngle = Math.Min(Math.PI, extentMeters / radius);
                 region = new PlanetRegion(Math.Max(0, radius - extentMeters),
                     radius + extentMeters, angleDegrees * Math.PI / 180 - halfAngle, 2 * halfAngle);
-                surface = new GameObject("Local planet blocks");
-                surface.hideFlags = HideFlags.HideAndDontSave;
-                surface.transform.SetParent(transform, false);
-                mesh = new Mesh { name = "Local excavation blocks", hideFlags = HideFlags.HideAndDontSave,
-                    indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
-                surface.AddComponent<MeshFilter>().sharedMesh = mesh;
-                var shader = blockShader != null ? blockShader : Shader.Find("MercurioIdle/Blocks");
-                if (shader == null) throw new InvalidOperationException("Shader MercurioIdle/Blocks não encontrado.");
-                material = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
-                surface.AddComponent<MeshRenderer>().sharedMaterial = material;
-                level.BlockRemoved += OnBlockRemoved;
-                dirty = true;
-                RebuildMesh();
+                if (drawLocalWindow)
+                {
+                    surface = new GameObject("Local planet blocks");
+                    surface.hideFlags = HideFlags.HideAndDontSave;
+                    surface.transform.SetParent(transform, false);
+                    mesh = new Mesh { name = "Local excavation blocks", hideFlags = HideFlags.HideAndDontSave,
+                        indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
+                    surface.AddComponent<MeshFilter>().sharedMesh = mesh;
+                    var shader = blockShader != null ? blockShader : Shader.Find("MercurioIdle/Blocks");
+                    if (shader == null) throw new InvalidOperationException("Shader MercurioIdle/Blocks não encontrado.");
+                    material = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
+                    surface.AddComponent<MeshRenderer>().sharedMaterial = material;
+                    level.BlockRemoved += OnBlockRemoved;
+                    dirty = true;
+                    RebuildMesh();
+                }
 #if UNITY_EDITOR
                 UnityEditor.SceneView.RepaintAll();
 #endif
