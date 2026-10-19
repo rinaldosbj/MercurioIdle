@@ -5,13 +5,14 @@ namespace MercurioIdle.Planet
 {
     /// <summary>
     /// Terreno consultável e escavável, com geração sob demanda escondida pela API.
-    /// Mantém identidade, dados e remoções durante a sessão. Não é thread-safe e não salva em disco.
+    /// Mantém dados e remoções durante a sessão. Não é thread-safe e não salva em disco.
+    /// Depois de UnloadOutside, objetos de bloco sem dados podem ser recriados: compare blocos pelo Address.
     /// </summary>
     public sealed class PlanetLevel : IPlanetLevel
     {
         private readonly PlanetBlockGenerator generator;
         private readonly double radiusMeters;
-        private readonly Dictionary<PlanetBlock, LevelBlock> blocks = new Dictionary<PlanetBlock, LevelBlock>();
+        private readonly Dictionary<PlanetBlockAddress, LevelBlock> blocks = new Dictionary<PlanetBlockAddress, LevelBlock>();
         private readonly PlanetExcavationState excavation;
         private int version;
 
@@ -97,12 +98,29 @@ namespace MercurioIdle.Planet
 
         private bool IsRemoved(PlanetBlock node) => excavation.IsRemoved(node);
 
+        public int LoadedBlockCount => generator.LoadedBlockCount;
+
+        public int UnloadOutside(PlanetRegion keep)
+        {
+            int freed = generator.Prune(keep);
+            if (freed == 0) return 0;
+
+            // Descarta os objetos de bloco cujo nó foi liberado e que não têm dados.
+            // Quem ainda os referencia continua funcionando: o nó é refeito pelo endereço.
+            var stale = new List<PlanetBlockAddress>();
+            foreach (var pair in blocks)
+                if (!pair.Value.HasData && !generator.IsLive(pair.Value.RawNode)) stale.Add(pair.Key);
+            foreach (var address in stale) blocks.Remove(address);
+            return freed;
+        }
+
         private LevelBlock Wrap(PlanetBlock node)
         {
-            if (!blocks.TryGetValue(node, out var block))
+            var address = generator.GetAddress(node);
+            if (!blocks.TryGetValue(address, out var block))
             {
                 block = new LevelBlock(this, node);
-                blocks.Add(node, block);
+                blocks.Add(address, block);
             }
             return block;
         }
@@ -110,8 +128,32 @@ namespace MercurioIdle.Planet
         private sealed class LevelBlock : IPlanetBlock
         {
             internal PlanetLevel Owner { get; }
-            internal PlanetBlock Node { get; }
+            private PlanetBlock node;
+            private int nodeEpoch;
             private Dictionary<Type, object> data;
+
+            internal PlanetBlock RawNode => node;
+            internal bool HasData => data != null;
+
+            // Depois de UnloadOutside o nó pode ter sido liberado: refaz o caminho pelo endereço.
+            internal PlanetBlock Node
+            {
+                get
+                {
+                    var generator = Owner.generator;
+                    if (nodeEpoch != generator.Epoch)
+                    {
+                        if (!generator.IsLive(node))
+                        {
+                            if (!generator.TryGetBlock(Address, out var current))
+                                throw new InvalidOperationException("O bloco não existe mais no gerador.");
+                            node = current;
+                        }
+                        nodeEpoch = generator.Epoch;
+                    }
+                    return node;
+                }
+            }
             public PlanetBlockAddress Address { get; }
             public PlanetBlockBounds Bounds { get; }
             public bool IsRemoved => Owner.IsRemoved(Node);
@@ -119,7 +161,8 @@ namespace MercurioIdle.Planet
             internal LevelBlock(PlanetLevel owner, PlanetBlock node)
             {
                 Owner = owner;
-                Node = node;
+                this.node = node;
+                nodeEpoch = owner.generator.Epoch;
                 Address = owner.generator.GetAddress(node);
                 Bounds = new PlanetBlockBounds(node.InnerRadius * owner.radiusMeters,
                     node.OuterRadius * owner.radiusMeters, node.StartAngle, node.EndAngle);

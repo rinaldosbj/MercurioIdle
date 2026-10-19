@@ -45,6 +45,17 @@ namespace MercurioIdle.Planet
         /// </summary>
         bool RemoveBlock(IPlanetBlock block);
 
+        /// <summary>Quantidade de blocos materializados em memória agora.</summary>
+        int LoadedBlockCount { get; }
+
+        /// <summary>
+        /// Libera da memória os blocos materializados fora da região (por exemplo, fora da vista da câmera).
+        /// A escavação é preservada e os blocos voltam idênticos quando forem consultados de novo.
+        /// Blocos com dados associados permanecem em memória. Retorna quantos nós foram liberados.
+        /// Não chamar durante uma enumeração.
+        /// </summary>
+        int UnloadOutside(PlanetRegion keep);
+
         /// <summary>
         /// Disparado uma vez por chamada de remoção bem-sucedida, com o bloco solicitado.
         /// Os dados existentes continuam acessíveis pela referência ao bloco removido.

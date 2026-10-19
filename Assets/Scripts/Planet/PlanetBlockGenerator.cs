@@ -17,6 +17,14 @@ namespace MercurioIdle.Planet
         private int nextId;
 
         public int MaterializedBlockCount => nextId;
+
+        /// <summary>Quantidade de blocos em memória agora. Diferente de MaterializedBlockCount, diminui quando Prune libera regiões.</summary>
+        public int LoadedBlockCount => addresses.Count;
+
+        /// <summary>Aumenta a cada Prune que libera blocos. Quem guarda referências a nós precisa revalidá-las.</summary>
+        internal int Epoch { get; private set; }
+
+        internal bool IsLive(PlanetBlock node) => addresses.ContainsKey(node);
         internal int LeafDepth => settings.DetailLevels - 1;
 
         /// <summary>
@@ -150,6 +158,42 @@ namespace MercurioIdle.Planet
             double end = region.StartAngleRadians + region.AngularWidthRadians;
             bool first = node.EndAngle > region.StartAngleRadians && node.StartAngle < Math.Min(2 * Math.PI, end);
             return first || (end > 2 * Math.PI && node.StartAngle < end - 2 * Math.PI);
+        }
+
+        /// <summary>
+        /// Libera os descendentes de todo setor que não intersecta a região a manter.
+        /// Os nós dependem só da geometria e das configurações, então EnsureChildren os recria
+        /// idênticos (mesmos endereços e limites) quando forem consultados de novo.
+        /// Retorna quantos nós foram liberados. Não chamar durante uma enumeração.
+        /// </summary>
+        internal int Prune(PlanetRegion keep)
+        {
+            int freed = 0;
+            foreach (var root in roots) freed += PruneNode(root, keep);
+            if (freed > 0) Epoch++;
+            return freed;
+        }
+
+        private int PruneNode(PlanetBlock node, PlanetRegion keep)
+        {
+            if (node.Children.Count == 0) return 0;
+            if (!Intersects(node, keep)) return FreeDescendants(node);
+            int freed = 0;
+            foreach (var child in node.Children) freed += PruneNode(child, keep);
+            return freed;
+        }
+
+        private int FreeDescendants(PlanetBlock node)
+        {
+            int freed = 0;
+            foreach (var child in node.Children)
+            {
+                freed += 1 + FreeDescendants(child);
+                addresses.Remove(child);
+            }
+            divisions.Remove(node);
+            node.Children.Clear();
+            return freed;
         }
 
         private void ValidateSettings()
