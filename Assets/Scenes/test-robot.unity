@@ -346,6 +346,8 @@ GameObject:
   - component: {fileID: 691298013}
   - component: {fileID: 691298012}
   - component: {fileID: 691298016}
+  - component: {fileID: 691298018}
+  - component: {fileID: 691298017}
   m_Layer: 0
   m_Name: Minios
   m_TagString: Untagged
@@ -366,6 +368,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MercurioIdle.Robots.MinionSpawner
   minionPrefab: {fileID: 7833813577503308528, guid: 3dbf7145a9e6fe547837c61236f2a589, type: 3}
+  startingMinions: 1
   viewMargin: 0.15
   createButtonAutomatically: 1
   buttonLabel: Criar minion
@@ -443,6 +446,33 @@ MonoBehaviour:
   unloadFarTerrain: 1
   keepMarginChunks: 4
   unloadIntervalSeconds: 3
+--- !u!114 &691298017
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 691298011}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 09d964a2c71f9384e977b80e4ddb8324, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MercurioIdle.Construction.BuildMenu
+  openAtStart: 0
+--- !u!114 &691298018
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 691298011}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5ef098ec94a1a0641812e8a09e0a9b23, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MercurioIdle.Construction.BuildingPlacer
+  viewCamera: {fileID: 0}
+  maxHeightDifference: 2
 --- !u!1001 &2311209597309778291
 PrefabInstance:
   m_ObjectHideFlags: 0
