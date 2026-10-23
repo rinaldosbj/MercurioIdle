@@ -1,17 +1,11 @@
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
+using MercurioIdle.Construction;
 using MercurioIdle.Planet;
 
 namespace MercurioIdle.Robots
 {
-    /// <summary>
-    /// Seleção de blocos com o mouse:
-    ///  - clique esquerdo em um bloco: marca / desmarca;
-    ///  - arrastar com o esquerdo: marca todos os blocos dentro do retângulo;
-    ///  - botão direito (clique ou arrastar): desmarca.
-    /// Os minions escavam os blocos marcados.
-    /// </summary>
     [RequireComponent(typeof(DigDesignations))]
     public sealed class DigSelectionController : MonoBehaviour
     {
@@ -25,7 +19,7 @@ namespace MercurioIdle.Robots
         private DigDesignations designations;
         private bool pressing;
         private bool dragging;
-        private bool markMode; // true = botão esquerdo (marcar); false = direito (desmarcar)
+        private bool markMode;
         private Vector2 startPosition;
         private Vector2 currentPosition;
 
@@ -42,7 +36,7 @@ namespace MercurioIdle.Robots
             {
                 bool left = mouse.leftButton.wasPressedThisFrame;
                 bool right = mouse.rightButton.wasPressedThisFrame;
-                if ((left || right) && !IsPointerOverUI())
+                if ((left || right) && !IsPointerOverUI() && !BuildingPlacer.Active)
                 {
                     pressing = true;
                     dragging = false;
@@ -60,7 +54,6 @@ namespace MercurioIdle.Robots
             var button = markMode ? mouse.leftButton : mouse.rightButton;
             if (!button.wasReleasedThisFrame) return;
 
-            // Arrastou, mas nenhum bloco ficou dentro do retângulo (clique "tremido"): vale como clique simples.
             if (dragging)
             {
                 if (ApplyRectangle() == 0) ApplyClick(startPosition);
@@ -97,7 +90,6 @@ namespace MercurioIdle.Robots
                 Mathf.Min(startPosition.x, currentPosition.x), Mathf.Min(startPosition.y, currentPosition.y),
                 Mathf.Max(startPosition.x, currentPosition.x), Mathf.Max(startPosition.y, currentPosition.y));
 
-            // Cantos do retângulo da tela -> região polar que os contém
             Vector2[] corners =
             {
                 new Vector2(rect.xMin, rect.yMin), new Vector2(rect.xMin, rect.yMax),
@@ -112,7 +104,6 @@ namespace MercurioIdle.Robots
                 if (!projection.TryScreenToPlanet(corners[i], out var p)) return 0;
                 if (i == 0) referenceAngle = p.AngleRadians;
 
-                // Ângulo relativo ao primeiro canto, normalizado para evitar o salto 0 / 2π
                 double relative = p.AngleRadians - referenceAngle;
                 if (relative > System.Math.PI) relative -= 2 * System.Math.PI;
                 else if (relative <= -System.Math.PI) relative += 2 * System.Math.PI;
@@ -123,7 +114,7 @@ namespace MercurioIdle.Robots
                 maxAngle = System.Math.Max(maxAngle, relative);
             }
 
-            const double paddingMeters = 1.5; // folga para não perder blocos da borda
+            const double paddingMeters = 1.5;
             double paddingAngle = paddingMeters / System.Math.Max(minRadius, 1.0);
             var region = new PlanetRegion(
                 System.Math.Max(0.0, minRadius - paddingMeters),
@@ -134,7 +125,6 @@ namespace MercurioIdle.Robots
             int count = 0;
             foreach (var block in level.EnumerateBlocks(region, designations.LeafDepth))
             {
-                // Só entra o bloco cujo centro está dentro do retângulo desenhado
                 if (!projection.TryPlanetToScreen(DigDesignations.CenterOf(block), out var screen)) continue;
                 if (!rect.Contains(screen)) continue;
                 if (++count > maxBlocksPerSelection) break;
@@ -146,7 +136,6 @@ namespace MercurioIdle.Robots
             return count;
         }
 
-        // Retângulo de seleção na tela
         private void OnGUI()
         {
             if (!dragging) return;

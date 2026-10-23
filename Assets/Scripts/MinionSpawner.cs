@@ -1,26 +1,44 @@
 using UnityEngine;
-using UnityEngine.EventSystems;
-using UnityEngine.InputSystem.UI;
-using UnityEngine.UI;
-using MercurioIdle.Planet;
+using MercurioIdle.Construction;
 
 namespace MercurioIdle.Robots
 {
     public sealed class MinionSpawner : MonoBehaviour
     {
         [SerializeField] private Minion minionPrefab;
+        [SerializeField, Min(0)] private int startingMinions = 1;
         [SerializeField, Range(0f, 0.45f)] private float viewMargin = 0.15f;
 
         [Header("Botão")]
         [SerializeField] private bool createButtonAutomatically = true;
-        [SerializeField] private string buttonLabel = "Criar minion";
+        [SerializeField] private string buttonLabel = "Criar robô";
 
         private Camera viewCamera;
+        private TerminalButton button;
+        private bool initialSpawned;
+        private int nextFactory;
+        private float refreshTimer;
+
+        public int Capacity => startingMinions + RobotFactory.TotalRobotCapacity;
+
+        public int MinionCount => FindObjectsByType<Minion>(FindObjectsSortMode.None).Length;
 
         private void Start()
         {
             viewCamera = Camera.main;
             if (createButtonAutomatically) BuildButton();
+        }
+
+        private void Update()
+        {
+            if (!initialSpawned) TrySpawnInitial();
+
+            refreshTimer -= Time.deltaTime;
+            if (refreshTimer <= 0f)
+            {
+                refreshTimer = 0.25f;
+                RefreshButton();
+            }
         }
 
         public void Spawn()
@@ -31,16 +49,34 @@ namespace MercurioIdle.Robots
                 return;
             }
 
-            Vector3 point = FindSpawnPoint();
-            var minion = Instantiate(minionPrefab, point, Quaternion.identity);
-            minion.SetHome(point);
+            if (RobotFactory.All.Count == 0 || MinionCount >= Capacity) return;
+
+            var factory = RobotFactory.All[nextFactory++ % RobotFactory.All.Count];
+            var minion = Instantiate(minionPrefab, factory.DoorPoint, Quaternion.identity);
+            minion.SetHome(factory.HomePoint);
+            RefreshButton();
+        }
+
+        private void TrySpawnInitial()
+        {
+            var designations = DigDesignations.Instance;
+            if (designations == null || designations.Terrain == null || designations.Terrain.Level == null) return;
+
+            initialSpawned = true;
+            if (minionPrefab == null) return;
+
+            int missing = startingMinions - MinionCount;
+            for (int i = 0; i < missing; i++)
+            {
+                Vector3 point = FindSpawnPoint();
+                var minion = Instantiate(minionPrefab, point, Quaternion.identity);
+                minion.SetHome(point);
+            }
         }
 
         private Vector3 FindSpawnPoint()
         {
-            var designations = DigDesignations.Instance;
-            var terrain = designations != null ? designations.Terrain : null;
-            float planeZ = terrain != null ? terrain.transform.position.z : 0f;
+            float planeZ = TerrainQuery.PlaneZ;
 
             if (viewCamera == null) viewCamera = Camera.main;
             if (viewCamera == null)
@@ -53,7 +89,7 @@ namespace MercurioIdle.Robots
                 float viewX = Random.Range(viewMargin, 1f - viewMargin);
                 float viewY = Random.Range(0.55f, 0.9f);
                 Vector3 point = ViewportToPlane(viewX, viewY, depth, planeZ);
-                if (!IsSolid(terrain, point)) return point;
+                if (!TerrainQuery.IsSolid(point)) return point;
             }
 
             return ViewportToPlane(0.5f, 0.75f, depth, planeZ);
@@ -66,87 +102,35 @@ namespace MercurioIdle.Robots
             return world;
         }
 
-        private static bool IsSolid(PlanetExcavationPreview terrain, Vector3 world)
-        {
-            if (terrain == null) return false;
-
-            var level = terrain.Level;
-            var projection = terrain.Projection as PlanetProjection;
-            if (level == null || projection == null) return false;
-
-            try
-            {
-                Vector3 local = terrain.transform.InverseTransformPoint(world);
-                var position = projection.FromLocal(new Vector3(local.x, local.y, 0f));
-                return level.TryGetBlock(position, out _);
-            }
-            catch (System.Exception)
-            {
-                return false;
-            }
-        }
-
         private void BuildButton()
         {
-            EnsureEventSystem();
+            var canvas = TerminalUI.CreateCanvas("Minion UI", 10);
 
-            var canvasObject = new GameObject("Minion UI");
-            var canvas = canvasObject.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            var scaler = canvasObject.AddComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1920f, 1080f);
-            scaler.matchWidthOrHeight = 0.5f;
-            canvasObject.AddComponent<GraphicRaycaster>();
+            button = TerminalUI.CreateButton(canvas.transform, "Botão criar minion", buttonLabel.ToUpperInvariant(), 22);
+            var rect = (RectTransform)button.transform;
+            rect.anchorMin = new Vector2(0f, 1f);
+            rect.anchorMax = new Vector2(0f, 1f);
+            rect.pivot = new Vector2(0f, 1f);
+            rect.anchoredPosition = new Vector2(20f, -20f);
+            rect.sizeDelta = new Vector2(320f, 84f);
 
-            var buttonObject = new GameObject("Botão criar minion", typeof(RectTransform));
-            buttonObject.transform.SetParent(canvasObject.transform, false);
-            var buttonRect = (RectTransform)buttonObject.transform;
-            buttonRect.anchorMin = buttonRect.anchorMax = new Vector2(0f, 1f);
-            buttonRect.pivot = new Vector2(0f, 1f);
-            buttonRect.anchoredPosition = new Vector2(20f, -20f);
-            buttonRect.sizeDelta = new Vector2(260f, 70f);
-
-            var image = buttonObject.AddComponent<Image>();
-            image.color = new Color(0.15f, 0.55f, 0.6f, 1f);
-            var button = buttonObject.AddComponent<Button>();
-            button.targetGraphic = image;
-            button.onClick.AddListener(Spawn);
-
-            var labelObject = new GameObject("Texto", typeof(RectTransform));
-            labelObject.transform.SetParent(buttonObject.transform, false);
-            var labelRect = (RectTransform)labelObject.transform;
-            labelRect.anchorMin = Vector2.zero;
-            labelRect.anchorMax = Vector2.one;
-            labelRect.offsetMin = Vector2.zero;
-            labelRect.offsetMax = Vector2.zero;
-
-            var label = labelObject.AddComponent<Text>();
-            label.text = buttonLabel;
-            label.alignment = TextAnchor.MiddleCenter;
-            label.fontSize = 28;
-            label.color = Color.white;
-            label.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            button.Clicked += Spawn;
+            RefreshButton();
         }
 
-        private static void EnsureEventSystem()
+        private void RefreshButton()
         {
-            var eventSystem = EventSystem.current != null ? EventSystem.current : FindFirstObjectByType<EventSystem>();
-            if (eventSystem == null)
-                eventSystem = new GameObject("EventSystem").AddComponent<EventSystem>();
+            if (button == null) return;
 
-            var legacy = eventSystem.GetComponent<StandaloneInputModule>();
-            if (legacy != null)
-            {
-                legacy.enabled = false;
-                Destroy(legacy);
-            }
+            int count = MinionCount;
+            int capacity = Capacity;
+            bool hasFactory = RobotFactory.All.Count > 0;
+            bool canCreate = hasFactory && count < capacity;
 
-            if (eventSystem.GetComponent<InputSystemUIInputModule>() == null)
-            {
-                var module = eventSystem.gameObject.AddComponent<InputSystemUIInputModule>();
-                module.AssignDefaultActions();
-            }
+            string second = !hasFactory ? "REQUER FÁBRICA [B]" : count >= capacity ? "LIMITE ATINGIDO" : "PRONTO";
+
+            button.Interactable = canCreate;
+            button.Label.text = buttonLabel.ToUpperInvariant() + "  " + count + "/" + capacity + "\n<size=14>" + second + "</size>";
         }
     }
 }
