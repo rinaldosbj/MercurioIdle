@@ -8,7 +8,7 @@ namespace MercurioIdle.Construction
     [RequireComponent(typeof(BuildingPlacer))]
     public sealed class BuildMenu : MonoBehaviour
     {
-        private const float PanelWidth = 360f;
+        private const float PanelWidth = 420f;
         private const float PanelMargin = 20f;
         private const float RowHeight = 92f;
 
@@ -34,6 +34,8 @@ namespace MercurioIdle.Construction
 
         private void Start()
         {
+            if (GetComponent<ProbeHud>() == null) gameObject.AddComponent<ProbeHud>();
+
             BuildUi();
             placer.Placed += OnPlaced;
             SetOpen(openAtStart);
@@ -57,6 +59,7 @@ namespace MercurioIdle.Construction
                 {
                     if (keyboard.escapeKey.wasPressedThisFrame && !BuildingPlacer.Active) SetOpen(false);
                     if (keyboard.digit1Key.wasPressedThisFrame && entries.Count > 0) Activate(entries[0]);
+                    if (keyboard.digit2Key.wasPressedThisFrame && entries.Count > 1) Activate(entries[1]);
                 }
             }
 
@@ -126,7 +129,7 @@ namespace MercurioIdle.Construction
             var shortcut = TerminalUI.CreateLabel(panelRect, "Atalho", "B", 15, TerminalUI.Dim, TextAnchor.UpperRight);
             TerminalUI.Anchor(shortcut.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(16f, -44f), new Vector2(-16f, -14f));
 
-            var definitions = new[] { BuildingDefinition.FactoryBuilding };
+            var definitions = new[] { BuildingDefinition.FactoryBuilding, BuildingDefinition.ProbeFactoryBuilding };
             for (int i = 0; i < definitions.Length; i++) entries.Add(BuildRow(panelRect, definitions[i], i));
 
             status = TerminalUI.CreateLabel(panelRect, "Status", "> B ABRE E FECHA ESTE PAINEL", 13, TerminalUI.Foreground, TextAnchor.LowerLeft);
@@ -162,7 +165,7 @@ namespace MercurioIdle.Construction
             var hotkey = TerminalUI.CreateLabel(codeRect, "Atalho", definition.Hotkey, 11, TerminalUI.Dim, TextAnchor.UpperLeft);
             TerminalUI.Anchor(hotkey.rectTransform, Vector2.zero, Vector2.one, new Vector2(4f, 0f), new Vector2(0f, -2f));
 
-            var nameLabel = TerminalUI.CreateLabel(row, "Nome", definition.Name, 17, TerminalUI.Foreground, TextAnchor.LowerLeft, FontStyle.Bold);
+            var nameLabel = TerminalUI.CreateLabel(row, "Nome", definition.Name, 15, TerminalUI.Foreground, TextAnchor.LowerLeft, FontStyle.Bold);
             TerminalUI.Anchor(nameLabel.rectTransform, new Vector2(0f, 0.5f), new Vector2(1f, 1f), new Vector2(80f, 0f), new Vector2(-136f, -14f));
 
             var info = TerminalUI.CreateLabel(row, "Info", string.Empty, 13, TerminalUI.Dim, TextAnchor.UpperLeft);

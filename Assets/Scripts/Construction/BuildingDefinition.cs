@@ -29,5 +29,19 @@ namespace MercurioIdle.Construction
             GetSprite = FactoryArt.GetFactorySprite,
             Build = (position, fall) => RobotFactory.Create(position, fall)
         };
+
+        public static readonly BuildingDefinition ProbeFactoryBuilding = new BuildingDefinition
+        {
+            Code = "FS",
+            Name = "FÁBRICA DE SONDAS",
+            Description = "+0,02 SON/S",
+            Hotkey = "2",
+            Width = ProbeFactoryArt.WorldWidth,
+            Height = ProbeFactoryArt.WorldHeight,
+            MaxCount = 1,
+            BuiltCount = () => ProbeFactory.All.Count,
+            GetSprite = ProbeFactoryArt.GetSprite,
+            Build = (position, fall) => ProbeFactory.Create(position, fall)
+        };
     }
 }
