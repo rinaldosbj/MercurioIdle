@@ -1,16 +1,11 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Serialization;
+using MercurioIdle.Construction;
 using MercurioIdle.Planet;
 
 namespace MercurioIdle.Robots
 {
-    /// <summary>
-    /// Guarda os blocos que o jogador marcou para escavar, desenha a marcação
-    /// (amarela = pronto para escavar, vermelha = esperando ficar exposto)
-    /// e distribui os blocos para os minions (cada bloco só vai para um minion por vez).
-    /// Só existe um na cena. É adicionado automaticamente junto com o DigSelectionController.
-    /// </summary>
     public sealed class DigDesignations : MonoBehaviour
     {
         public static DigDesignations Instance { get; private set; }
@@ -37,8 +32,9 @@ namespace MercurioIdle.Robots
         public PlanetExcavationPreview Terrain => terrain;
         public int LeafDepth => leafDepth;
 
-        /// <summary>Aumenta a cada bloco marcado. Os minions usam isso para reagir na hora.</summary>
         public int Version { get; private set; }
+
+        private const float ProtectionMargin = 0.25f;
 
         private readonly Dictionary<PlanetBlockAddress, IPlanetBlock> marked = new Dictionary<PlanetBlockAddress, IPlanetBlock>();
         private readonly Dictionary<PlanetBlockAddress, SpriteRenderer> marks = new Dictionary<PlanetBlockAddress, SpriteRenderer>();
@@ -60,15 +56,14 @@ namespace MercurioIdle.Robots
             if (terrain == null) terrain = FindFirstObjectByType<PlanetExcavationPreview>();
             readySprite = CreateMarkSprite(readyColor);
             waitingSprite = CreateMarkSprite(waitingColor);
+            Building.Built += OnBuildingBuilt;
         }
 
         private void Update()
         {
-            // Se o terreno foi regenerado, as marcações antigas deixam de valer.
             var current = terrain != null ? terrain.Level : null;
             if (current != level) Rebind(current);
 
-            // Reavalia as cores de tempos em tempos (a exposição muda quando blocos são removidos).
             refreshTimer -= Time.deltaTime;
             if (refreshTimer <= 0f)
             {
@@ -81,6 +76,7 @@ namespace MercurioIdle.Robots
         private void OnDestroy()
         {
             if (level != null) level.BlockRemoved -= OnBlockRemoved;
+            Building.Built -= OnBuildingBuilt;
             if (Instance == this) Instance = null;
         }
 
@@ -95,10 +91,8 @@ namespace MercurioIdle.Robots
         private void OnBlockRemoved(IPlanetBlock block)
         {
             Unmark(block.Address);
-            refreshRequested = true; // blocos abaixo podem ter ficado expostos
+            refreshRequested = true;
         }
-
-        // ---------- Marcar / desmarcar ----------
 
         public bool IsMarked(IPlanetBlock block) => block != null && marked.ContainsKey(block.Address);
 
@@ -107,6 +101,7 @@ namespace MercurioIdle.Robots
             if (level == null || block == null || block.IsRemoved) return;
             var address = block.Address;
             if (marked.ContainsKey(address)) return;
+            if (IsProtected(block)) return;
 
             marked[address] = block;
             marks[address] = CreateMark(block);
@@ -143,9 +138,6 @@ namespace MercurioIdle.Robots
             Version++;
         }
 
-        // ---------- Cor da marcação ----------
-
-        // Amarelo = pode escavar agora; vermelho = ainda coberto. Processa em partes para não pesar.
         private void RefreshMarkSprites()
         {
             if (level == null) return;
@@ -172,12 +164,6 @@ namespace MercurioIdle.Robots
             }
         }
 
-        // ---------- Trabalho para os minions ----------
-
-        /// <summary>
-        /// Reserva o bloco marcado mais próximo que já pode ser escavado (exposto).
-        /// Blocos marcados que ainda estão cobertos esperam até ficarem expostos.
-        /// </summary>
         public bool TryClaimNearest(Vector3 fromWorld, out IPlanetBlock best, out Vector3 bestWorld)
         {
             best = null;
@@ -187,12 +173,12 @@ namespace MercurioIdle.Robots
             float bestDistance = float.MaxValue;
             foreach (var pair in marked)
             {
-                // Reservado por outro minion (reservas esquecidas expiram sozinhas)
                 if (claimedAt.TryGetValue(pair.Key, out float since) && Time.time - since < claimTimeoutSeconds)
                     continue;
 
                 var block = pair.Value;
                 Vector3 world = GetWorldCenter(block);
+                if (IsProtectedAt(world)) continue;
                 float distance = Vector2.Distance(world, fromWorld);
                 if (distance >= bestDistance) continue;
                 if (!level.CanRemoveBlock(block)) continue;
@@ -212,9 +198,6 @@ namespace MercurioIdle.Robots
             if (block != null) claimedAt.Remove(block.Address);
         }
 
-        // ---------- Geometria ----------
-
-        /// <summary>Centro do bloco em coordenadas polares do planeta.</summary>
         public static PlanetPosition CenterOf(IPlanetBlock block)
         {
             var b = block.Bounds;
@@ -223,7 +206,32 @@ namespace MercurioIdle.Robots
                 (b.StartAngleRadians + b.EndAngleRadians) * 0.5);
         }
 
-        /// <summary>Centro do bloco no mundo (plano do terreno).</summary>
+        public bool IsProtected(IPlanetBlock block)
+        {
+            if (block == null || terrain == null || Projection == null) return false;
+            return IsProtectedAt(GetWorldCenter(block));
+        }
+
+        private static bool IsProtectedAt(Vector3 world)
+        {
+            foreach (var building in Building.Instances)
+            {
+                if (world.x < building.Left - ProtectionMargin || world.x > building.Right + ProtectionMargin) continue;
+                if (world.y < building.Bottom) return true;
+            }
+
+            return false;
+        }
+
+        private void OnBuildingBuilt(Building building)
+        {
+            var protectedAddresses = new List<PlanetBlockAddress>();
+            foreach (var pair in marked)
+                if (IsProtected(pair.Value)) protectedAddresses.Add(pair.Key);
+
+            foreach (var address in protectedAddresses) Unmark(address);
+        }
+
         public Vector3 GetWorldCenter(IPlanetBlock block)
         {
             Vector3 local = Projection.ToLocal(CenterOf(block));
@@ -236,7 +244,7 @@ namespace MercurioIdle.Robots
             double midRadius = (b.InnerRadiusMeters + b.OuterRadiusMeters) * 0.5;
 
             Vector3 local = Projection.ToLocal(CenterOf(block));
-            local.z = -0.2f; // um pouco na frente do terreno
+            local.z = -0.2f;
 
             var go = new GameObject("DigMark");
             go.transform.SetParent(transform, false);
@@ -246,7 +254,7 @@ namespace MercurioIdle.Robots
                 (float)(b.OuterRadiusMeters - b.InnerRadiusMeters), 1f);
 
             var renderer = go.AddComponent<SpriteRenderer>();
-            renderer.sprite = waitingSprite; // a cor certa é definida logo em seguida pelo refresh
+            renderer.sprite = waitingSprite;
             renderer.sortingOrder = 5;
             return renderer;
         }
