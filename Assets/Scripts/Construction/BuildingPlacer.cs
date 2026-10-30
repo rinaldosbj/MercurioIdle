@@ -157,10 +157,10 @@ namespace MercurioIdle.Construction
 
             if (high - low > maxHeightDifference) return;
 
-            foreach (var factory in RobotFactory.All)
+            foreach (var other in Building.Instances)
             {
-                bool overlapsX = centerX - half < factory.Right + OverlapMargin && factory.Left - OverlapMargin < centerX + half;
-                bool overlapsY = baseY < factory.Top && factory.Bottom < baseY + definition.Height;
+                bool overlapsX = centerX - half < other.Right + OverlapMargin && other.Left - OverlapMargin < centerX + half;
+                bool overlapsY = baseY < other.Top && other.Bottom < baseY + definition.Height;
                 if (overlapsX && overlapsY) return;
             }
 
