@@ -1,0 +1,423 @@
+#pragma kernel BuildPanels
+#pragma kernel ResetCounters
+#pragma kernel FinalizeArguments
+#pragma kernel BuildOrbits
+#pragma kernel ClearOverdraw
+#pragma kernel BuildOcclusionTiles
+#define PI 3.14159265358979323846
+#define TWO_PI 6.28318530717958647692
+#include "../DysonSurfaceCoverage.hlsl"
+struct Panel { float4 position; float4 tangent; float4 bitangent; float4 normal; };
+RWStructuredBuffer<Panel> _Panels;
+RWStructuredBuffer<uint> _NearIds;
+struct PointSample { float4 position; };
+RWStructuredBuffer<PointSample> _Points;
+RWStructuredBuffer<uint> _Counters;
+RWBuffer<uint> _NearArgs, _PointArgs;
+float4 _SurfaceData, _SurfaceOrbitCdf[256];
+float4 _SurfaceGrazing;
+float4 _Distribution, _Lod, _CameraPosition, _CameraForward;
+float3 _SunPosition, _TargetPosition, _RingNormal;
+float4 _RingData, _TorusData, _LatticeData;
+float _Phase, _CullMargin;
+float4 _FrustumPlanes[6];
+float4 _FrustumPadding;
+float3 _CentralTangent, _CentralBitangent;
+
+bool OutsideCollectorFrustum(float3 mirror) {
+    if (_FrustumPadding.w < 0.5) return false;
+    // Enclose both the custom panel mesh and the screen-space point triangle.
+    // Perspective padding uses positive camera depth; near-plane intersections
+    // remain visible through the panel radius even when their center is behind.
+    float depth = dot(mirror - _CameraPosition.xyz, _CameraForward.xyz);
+    float pointRadius = _FrustumPadding.y * (_Lod.w > 0.5 ? 1 : max(depth, 0));
+    float radius = max(_FrustumPadding.x, pointRadius) + _FrustumPadding.z;
+    [unroll] for (uint plane = 0; plane < 6; plane++)
+        if (dot(_FrustumPlanes[plane].xyz, mirror) + _FrustumPlanes[plane].w < -radius)
+            return true;
+    return false;
+}
+Texture2D<float> _CollectorOcclusionTiles;
+Texture2D<float4> _SharedSurfaceHit;
+RWTexture2D<float> _CollectorOcclusionTilesRW;
+float _UseSharedOcclusion, _ValidateSharedOcclusion;
+float4x4 _OcclusionViewProjection;
+float4 _OcclusionExtent, _OcclusionProjectionBounds;
+
+bool HiddenBySharedOpaqueSurface(float3 mirror) {
+    if(_UseSharedOcclusion<0.5) return false;
+    float centerDepth=dot(mirror-_CameraPosition.xyz,_CameraForward.xyz);
+    float radius=max(_FrustumPadding.x,_FrustumPadding.y*(_Lod.w>0.5 ? 1 : max(centerDepth,0)))+_FrustumPadding.z;
+    if(centerDepth<=radius+_OcclusionProjectionBounds.w) return false;
+    float4 center=mul(_OcclusionViewProjection,float4(mirror,1));
+    float wRadius=radius*_OcclusionProjectionBounds.z;
+    if(center.w<=wRadius+0.00001) return false;
+    float2 ndc=center.xy/center.w;
+    float2 extent=(radius*_OcclusionProjectionBounds.xy+abs(ndc)*wRadius)/(center.w-wRadius);
+    float2 pixelMin=(float2(ndc.x-extent.x,-ndc.y-extent.y)*0.5+0.5)*_OcclusionExtent.xy-1;
+    float2 pixelMax=(float2(ndc.x+extent.x,-ndc.y+extent.y)*0.5+0.5)*_OcclusionExtent.xy+1;
+    // Retain partial viewport/near-plane intersections and large footprints.
+    if(any(pixelMin<0) || any(pixelMax>=_OcclusionExtent.xy)) return false;
+    uint2 first=(uint2)floor(pixelMin/8),last=(uint2)floor(pixelMax/8);
+    if(any(last-first>1)) return false;
+    float farthestOpaque=0;
+    [loop] for(uint y=first.y;y<=last.y;y++)
+        [loop] for(uint x=first.x;x<=last.x;x++)
+            farthestOpaque=max(farthestOpaque,_CollectorOcclusionTiles.Load(int3(x,y,0)));
+    return farthestOpaque<centerDepth-radius-max(0.0001,centerDepth*0.00001);
+}
+
+uint _Count, _DispatchWidth;
+uint Hash(uint x) { x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; return x ^ (x >> 16); }
+float Random01(uint x) { return (Hash(x) & 0x00ffffffu) / 16777216.0; }
+            float3 SafeNormal(float3 value, float3 fallback) {
+                float l = dot(value,value);
+                return l > 1e-12 ? value * rsqrt(max(l,1e-12)) : fallback;
+            }
+            void Basis(float3 n, out float3 t, out float3 b) {
+                t = normalize(cross(abs(n.y) < 0.99 ? float3(0,1,0) : float3(1,0,0), n));
+                b = cross(n,t);
+            }
+
+
+struct Orbit { float4 tangent; float4 bitangent; float4 data; };
+RWStructuredBuffer<Orbit> _Orbits;
+uint _OrbitCount;
+float _UseOrbitCache;
+StructuredBuffer<float4> _BirthOrbitCdf;
+float4 _BirthDistribution;
+
+float BirthSurfaceFraction(float core, float sigma) {
+    float x=(1-core)/(1.41421356237*sigma);
+    float t=1/(1+0.3275911*x);
+    float erf=1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-0.284496736)*t+0.254829592)*t*exp(-x*x);
+    return core+sigma*1.25331413732*erf;
+}
+
+bool BirthOrbit(uint orbit, out Orbit result) {
+    result=(Orbit)0;
+    if (_BirthDistribution.z<0.5 || _LatticeData.w<0.5) return false;
+    float birthPopulation=orbit*max(1,(uint)_RingData.w)+1;
+    float fraction=birthPopulation/max(_BirthDistribution.x,1e-8);
+    float sigma=max(_BirthDistribution.y,1e-6);
+    if (fraction<=BirthSurfaceFraction(0,sigma)) return false;
+    float low=0,high=1;
+    [loop] for(uint j=0;j<24;j++) {
+        float middle=(low+high)*0.5;
+        if(BirthSurfaceFraction(middle,sigma)<fraction) low=middle; else high=middle;
+    }
+    float core=fraction>=1 ? 1 : (low+high)*0.5;
+    uint seed=(uint)_Distribution.w,key=Hash(orbit^seed);
+    uint quantile=min(255,(uint)(Random01(key+31u)*256));
+    float row=core*(_BirthDistribution.w-1);
+    uint first=min((uint)row,(uint)_BirthDistribution.w-2);
+    float4 sample=lerp(_BirthOrbitCdf[first*256+quantile],_BirthOrbitCdf[(first+1)*256+quantile],row-first);
+    float radialMass=_TorusData.x>0 ? 0.0454396 : 0;
+    float mixture=radialMass*sample.w/max((1-radialMass)*sample.z+radialMass*sample.w,1e-8);
+    bool radialTail=Random01(key+503u)<mixture;
+    float belt=max(core,radialTail ? sample.y : sample.x);
+    float cosineSample=Random01(key+67u)*(radialTail ? 1 : sqrt(max(0,1-core*core/max(belt*belt,1e-12))));
+    float amplitude=belt*sqrt(max(0,1-cosineSample*cosineSample));
+    uint planes=max(1,(uint)_RingData.z),plane=orbit%planes,section=orbit/planes;
+    float sn,cn;sincos(TWO_PI*(plane+Random01(seed+section*7919u))/planes,sn,cn);
+    float3 n=normalize(sqrt(max(0,1-amplitude*amplitude))*_RingNormal+amplitude*(cn*_CentralTangent+sn*_CentralBitangent));
+    float3 t=SafeNormal(_CentralTangent-n*dot(_CentralTangent,n),_CentralBitangent);
+    float stagger=lerp(frac((plane+section*0.5)*0.5),frac(orbit*0.61803398875+Random01(seed)),_Distribution.z);
+    float erfSample=radialTail ? lerp(0.954499736,0.9999366575,Random01(key+17u)) : 0.954499736*Random01(key+17u);
+    float logTerm=log(max(1-erfSample*erfSample,1e-8));
+    float term=2/(PI*0.147)+0.5*logTerm;
+    float inverseErf=sqrt(max(0,sqrt(max(0,term*term-logTerm/0.147))-term));
+    float offset=1.41421356237*inverseErf*_TorusData.x*(Random01(key+101u)<0.5 ? -1 : 1);
+    result.tangent=float4(t,0);result.bitangent=float4(cross(n,t),0);
+    result.data=float4(_RingData.x+offset,stagger,offset,radialTail ? 1 : 0);
+    return true;
+}
+
+void CollectorIndices(uint id, uint slots, out uint orbit, out uint slot) {
+    // Fill phases of one fixed orbit before revealing the next orbital plane.
+    orbit=id/slots;
+    slot=id%slots;
+}
+
+float CollectorPhase(uint slot, uint slots, float stagger) {
+    // Reveal a permutation of a fixed lattice, spreading new mirrors around the orbit.
+    if (_LatticeData.w > 0.5) slot = (slot * (uint)_LatticeData.z) % slots;
+    return TWO_PI * (slot + stagger) / slots + _Phase;
+}
+
+
+uint EvaluateCollector(uint id, out PointSample pointData) {
+pointData.position=0;
+if (id >= _Count) return 0;
+                float3 centralT=_CentralTangent,centralB=_CentralBitangent;
+                float3 radial,mirror;float orbitRadius;
+                bool radialTail=false; float offset=0;
+                Orbit birthOrbit;
+                if (_UseOrbitCache > 0.5) {
+                    uint slots=max(1,(uint)_RingData.w);
+                    uint orbitId,slot;CollectorIndices(id,slots,orbitId,slot);
+                    Orbit orbit=_Orbits[orbitId];
+                    float theta=CollectorPhase(slot,slots,orbit.data.y);
+                    float sn,cn;sincos(theta,sn,cn);
+                    radial=cn*orbit.tangent.xyz+sn*orbit.bitangent.xyz;
+                    orbitRadius=orbit.data.x; offset=orbit.data.z; radialTail=orbit.data.w>0.5;
+                    mirror=_SunPosition+orbitRadius*radial;
+                }
+                else if (BirthOrbit(id/max(1,(uint)_RingData.w),birthOrbit)) {
+                    uint slots=max(1,(uint)_RingData.w);
+                    float sn,cn;sincos(CollectorPhase(id%slots,slots,birthOrbit.data.y),sn,cn);
+                    radial=cn*birthOrbit.tangent.xyz+sn*birthOrbit.bitangent.xyz;
+                    orbitRadius=birthOrbit.data.x;offset=birthOrbit.data.z;radialTail=birthOrbit.data.w>0.5;
+                    mirror=_SunPosition+orbitRadius*radial;
+                }
+                else if (_SurfaceData.z > 0.5 && _LatticeData.w < 0.5) {
+                    uint slots=max(1,(uint)_RingData.w);
+                    uint orbit=id/slots,slot=id%slots;
+                    uint planes=max(1,(uint)_RingData.z),plane=orbit%planes,section=orbit/planes;
+                    uint seed=(uint)_Distribution.w;
+                    uint key=Hash(orbit^seed);
+                    uint quantile=min(255,(uint)(Random01(key+31u)*256));
+                    radialTail=Random01(key+503u)<_LatticeData.z;
+                    float belt=radialTail ? _SurfaceOrbitCdf[quantile].y : _SurfaceOrbitCdf[quantile].x;
+                    float cosineSample=Random01(key+67u)*(radialTail ? 1 : sqrt(max(0,1-_SurfaceData.x*_SurfaceData.x/max(belt*belt,1e-12))));
+                    float amplitude=belt*sqrt(max(0,1-cosineSample*cosineSample));
+                    float omega=TWO_PI*(plane+Random01(seed+section*7919u))/planes;
+                    float sn,cn;sincos(omega,sn,cn);
+                    float3 n=normalize(sqrt(max(0,1-amplitude*amplitude))*_RingNormal+amplitude*(cn*centralT+sn*centralB));
+                    float3 t=SafeNormal(centralT-n*dot(centralT,n),centralB);
+                    float3 b=cross(n,t);
+                    float stagger=lerp(frac((plane+section*0.5)*0.5),frac(orbit*0.61803398875+Random01(seed)),_Distribution.z);
+                    float theta=TWO_PI*(slot+stagger)/slots+_Phase;
+                    float sp,cp;sincos(theta,sp,cp);
+                    radial=cp*t+sp*b;
+                    // Gaussian radial cross-section: inner core and BOTH radial outskirts.
+                    float erfSample=radialTail ? lerp(0.954499736,0.9999366575,Random01(key+17u)) : 0.954499736*Random01(key+17u);
+                    float logTerm=log(max(1-erfSample*erfSample,1e-8));
+                    float term=2/(PI*0.147)+0.5*logTerm;
+                    float inverseErf=sqrt(max(0,sqrt(max(0,term*term-logTerm/0.147))-term));
+                    offset=1.41421356237*inverseErf*_TorusData.x*(Random01(key+101u)<0.5 ? -1 : 1);
+                    orbitRadius=_RingData.x+offset;
+                    mirror=_SunPosition+orbitRadius*radial;
+                }
+                else {
+                uint slots = (uint)_RingData.w;
+                uint orbit,slot;CollectorIndices(id,slots,orbit,slot);
+                uint planeCount = (uint)_RingData.z;
+                uint plane = orbit % planeCount;
+                uint section = orbit / planeCount;
+                uint radialLayers = (uint)_LatticeData.x;
+                uint inclinationLayers = (uint)_LatticeData.y;
+                // Radius is sampled from N(0,sigmaRadial), with no discrete shells.
+                // The tilt vector has two Gaussian components: its amplitude is Rayleigh.
+                // Consequently height at any local azimuth is a Gaussian projection, not
+                // a folded Gaussian amplitude multiplied by a sine (which produces a cusp).
+                uint key = Hash(orbit ^ (uint)_Distribution.w);
+                float u = (Hash(key + 17u) + 0.5) / 4294967296.0;
+                float v = (Hash(key + 101u) + 0.5) / 4294967296.0;
+                float w = (Hash(key + 997u) + 0.5) / 4294967296.0;
+                // Reject tails outside four sigma rather than clamping them onto an edge.
+                float tail = exp(-0.5 * 16.0);
+                float radialRayleigh = sqrt(-2.0 * log(max(tail + (1-tail)*u,tail)));
+                float radialOffset = radialRayleigh * cos(TWO_PI*v) * _TorusData.x;
+                offset=radialOffset; radialTail=abs(offset)>2*_TorusData.x;
+                orbitRadius = _RingData.x + radialOffset;
+                float verticalSigma = _TorusData.y; // Resolved and width-constrained on the CPU when edited.
+                float maxTilt = min(4.0, 0.95 * max(_RingData.x - 4*_TorusData.x, 0.001) / max(verticalSigma,0.0001));
+                float tiltTail = exp(-0.5 * maxTilt * maxTilt);
+                float tiltAmplitude = sqrt(-2.0 * log(max(tiltTail + (1-tiltTail)*w,tiltTail)));
+                float inclination = _TorusData.w > 0.5
+                    ? asin(min(0.95, tiltAmplitude * verticalSigma / max(orbitRadius,1e-4)))
+                    : _RingData.y;
+                // Uniform nodes plus independent Rayleigh amplitudes fill the tilt disk.
+                float omega = TWO_PI * (plane + Random01((uint)_Distribution.w + section * 7919u)) / planeCount;
+                // Revolve a tilted normal about THIS ring's central normal, never world Y.
+                float sinInclination, cosInclination, sinNode, cosNode;
+                sincos(inclination,sinInclination,cosInclination);
+                sincos(omega,sinNode,cosNode);
+                float3 n = normalize(cosInclination * _RingNormal + sinInclination * (cosNode*centralT + sinNode*centralB));
+                // Project the SAME reference tangent into each plane. This preserves lattice phase
+                // alignment instead of adding an unwanted full orbital turn with each node revolution.
+                float3 t = normalize(centralT - n * dot(centralT,n));
+                float3 b = cross(n,t);
+                float oldStagger = frac((plane + section * 0.5) * 0.5);
+                float distributedStagger = frac(orbit * 0.61803398875 + Random01((uint)_Distribution.w));
+                float stagger = lerp(oldStagger, distributedStagger, _Distribution.z);
+                float theta = CollectorPhase(slot,slots,stagger);
+                float sinPhase, cosPhase; sincos(theta,sinPhase,cosPhase);
+                radial = cosPhase*t + sinPhase*b;
+                // No altitude translation: dot(mirror - SunPosition, n) == 0 at all times.
+                mirror = _SunPosition + orbitRadius * radial;
+                }
+                if (OutsideCollectorFrustum(mirror)) return 0;
+                if (_SurfaceData.z > 0.5) {
+                    // Cull only the dense VOLUME represented by the band, never its radial outskirts.
+                    float angularMargin=_CullMargin/max(orbitRadius,0.001);
+                    bool safelyInsideRadius=abs(offset)<max(0,2*_TorusData.x-_CullMargin);
+                    bool safelyInsideLatitude=abs(dot(radial,_RingNormal))<max(0,_SurfaceData.x-angularMargin);
+                    if(!radialTail && safelyInsideRadius && safelyInsideLatitude) {
+                        float3 toMirror=mirror-_CameraPosition.xyz;
+                        float mirrorDistance=length(toMirror);
+                        float3 ray=toMirror/max(mirrorDistance,1e-6);
+                        float hitDistance,hitFace;float3 hitNormal;
+                        bool hit=DysonSurfaceHit(_CameraPosition.xyz,ray,_SunPosition,_RingNormal,
+                            _RingData.x,2*_TorusData.x,_SurfaceData.x,hitDistance,hitNormal,hitFace);
+                        float coverage=hit && hitDistance<mirrorDistance-_CullMargin
+                            ? DysonBoundaryCoverage(_CameraPosition.xyz+hitDistance*ray,ray,
+                                _SunPosition,_RingNormal,_RingData.x,2*_TorusData.x,_SurfaceData.x,_SurfaceGrazing.xy) : 0;
+                        if(_SurfaceData.w<0 && hit)
+                            coverage*=DysonDensityEdgeCoverage(_CameraPosition.xyz+hitDistance*ray,_SunPosition,_RingNormal,_SurfaceData.xy);
+                        // Only the completely opaque proxy may replace collectors.
+                        // Restore EVERY collector during the fade; never stipple the core.
+                        if(coverage>=0.9999) return 0;
+                    }
+                }
+                bool sharedHidden=HiddenBySharedOpaqueSurface(mirror);
+                if(sharedHidden && _ValidateSharedOcclusion<0.5) return 0;
+                float depth = dot(mirror - _CameraPosition.xyz, _CameraForward.xyz);
+                float diameterPixels = _Lod.z / (_Lod.w > 0.5 ? 1 : max(depth, 1e-4));
+                if (_Lod.x > 0 && diameterPixels < _Lod.x) {
+                    pointData.position = float4(mirror, max(diameterPixels, _Lod.y)*(sharedHidden ? -1 : 1));
+                    return 2; // Points need neither reflection orientation nor a 64-byte transform.
+                }
+                float3 incoming = SafeNormal(mirror - _SunPosition, radial);
+                float3 outgoing = SafeNormal(_TargetPosition - mirror, incoming);
+                // For straight-through reflection choose a perpendicular normal.
+                float3 fallbackT, fallbackB; Basis(incoming,fallbackT,fallbackB);
+                float3 mirrorNormal = SafeNormal(outgoing - incoming, fallbackT);
+                float3 t,b;Basis(mirrorNormal,t,b);
+
+Panel panel;
+panel.position = float4(mirror, sharedHidden ? -1 : length(reflect(incoming,mirrorNormal) - outgoing));
+panel.tangent = float4(t,0); panel.bitangent = float4(b,0); panel.normal = float4(mirrorNormal,0);
+_Panels[id] = panel;
+return 1;
+}
+
+[numthreads(64,1,1)]
+void BuildPanels(uint3 thread : SV_DispatchThreadID) {
+    uint id = thread.x + thread.y * _DispatchWidth;
+    PointSample pointData;
+    uint kind = EvaluateCollector(id, pointData);
+    uint localIndex=0;
+    if (kind == 1) { InterlockedAdd(_Counters[0], 1, localIndex); _NearIds[localIndex]=id; }
+    else if (kind == 2) { InterlockedAdd(_Counters[1], 1, localIndex); _Points[localIndex]=pointData; }
+}
+
+[numthreads(1,1,1)]
+void ResetCounters(uint3 id : SV_DispatchThreadID) { _Counters[0] = 0; _Counters[1] = 0; }
+[numthreads(1,1,1)]
+void FinalizeArguments(uint3 id : SV_DispatchThreadID) {
+    _NearArgs[1] = _Counters[0]; _PointArgs[1] = _Counters[1];
+}
+
+[numthreads(64,1,1)]
+void BuildOrbits(uint3 thread : SV_DispatchThreadID) {
+    uint id = thread.x + thread.y * _DispatchWidth;
+    if (id >= _OrbitCount) return;
+    float3 centralT=_CentralTangent, centralB=_CentralBitangent;
+    float orbitRadius;
+    Orbit result;
+    if(BirthOrbit(id,result)) { _Orbits[id]=result; return; }
+    if (_SurfaceData.z > 0.5 && _LatticeData.w < 0.5) {
+                    uint slots=max(1,(uint)_RingData.w);
+                    uint orbit=id;
+                    uint planes=max(1,(uint)_RingData.z),plane=orbit%planes,section=orbit/planes;
+                    uint seed=(uint)_Distribution.w;
+                    uint key=Hash(orbit^seed);
+                    uint quantile=min(255,(uint)(Random01(key+31u)*256));
+                    bool radialTail=Random01(key+503u)<_LatticeData.z;
+                    float belt=radialTail ? _SurfaceOrbitCdf[quantile].y : _SurfaceOrbitCdf[quantile].x;
+                    float cosineSample=Random01(key+67u)*(radialTail ? 1 : sqrt(max(0,1-_SurfaceData.x*_SurfaceData.x/max(belt*belt,1e-12))));
+                    float amplitude=belt*sqrt(max(0,1-cosineSample*cosineSample));
+                    float omega=TWO_PI*(plane+Random01(seed+section*7919u))/planes;
+                    float sn,cn;sincos(omega,sn,cn);
+                    float3 n=normalize(sqrt(max(0,1-amplitude*amplitude))*_RingNormal+amplitude*(cn*centralT+sn*centralB));
+                    float3 t=SafeNormal(centralT-n*dot(centralT,n),centralB);
+                    float3 b=cross(n,t);
+                    float stagger=lerp(frac((plane+section*0.5)*0.5),frac(orbit*0.61803398875+Random01(seed)),_Distribution.z);
+                    // Gaussian radial cross-section: inner core and BOTH radial outskirts.
+                    float erfSample=radialTail ? lerp(0.954499736,0.9999366575,Random01(key+17u)) : 0.954499736*Random01(key+17u);
+                    float logTerm=log(max(1-erfSample*erfSample,1e-8));
+                    float term=2/(PI*0.147)+0.5*logTerm;
+                    float inverseErf=sqrt(max(0,sqrt(max(0,term*term-logTerm/0.147))-term));
+                    float offset=1.41421356237*inverseErf*_TorusData.x*(Random01(key+101u)<0.5 ? -1 : 1);
+                    orbitRadius=_RingData.x+offset;
+
+        result.tangent=float4(t,0); result.bitangent=float4(b,0);
+        result.data=float4(orbitRadius,stagger,offset,radialTail ? 1 : 0);
+    } else {
+                uint slots = (uint)_RingData.w;
+                uint orbit = id;
+                uint planeCount = (uint)_RingData.z;
+                uint plane = orbit % planeCount;
+                uint section = orbit / planeCount;
+                uint radialLayers = (uint)_LatticeData.x;
+                uint inclinationLayers = (uint)_LatticeData.y;
+                // Radius is sampled from N(0,sigmaRadial), with no discrete shells.
+                // The tilt vector has two Gaussian components: its amplitude is Rayleigh.
+                // Consequently height at any local azimuth is a Gaussian projection, not
+                // a folded Gaussian amplitude multiplied by a sine (which produces a cusp).
+                uint key = Hash(orbit ^ (uint)_Distribution.w);
+                float u = (Hash(key + 17u) + 0.5) / 4294967296.0;
+                float v = (Hash(key + 101u) + 0.5) / 4294967296.0;
+                float w = (Hash(key + 997u) + 0.5) / 4294967296.0;
+                // Reject tails outside four sigma rather than clamping them onto an edge.
+                float tail = exp(-0.5 * 16.0);
+                float radialRayleigh = sqrt(-2.0 * log(max(tail + (1-tail)*u,tail)));
+                float radialOffset = radialRayleigh * cos(TWO_PI*v) * _TorusData.x;
+                orbitRadius = _RingData.x + radialOffset;
+                float verticalSigma = _TorusData.y; // Resolved and width-constrained on the CPU when edited.
+                float maxTilt = min(4.0, 0.95 * max(_RingData.x - 4*_TorusData.x, 0.001) / max(verticalSigma,0.0001));
+                float tiltTail = exp(-0.5 * maxTilt * maxTilt);
+                float tiltAmplitude = sqrt(-2.0 * log(max(tiltTail + (1-tiltTail)*w,tiltTail)));
+                float inclination = _TorusData.w > 0.5
+                    ? asin(min(0.95, tiltAmplitude * verticalSigma / max(orbitRadius,1e-4)))
+                    : _RingData.y;
+                // Uniform nodes plus independent Rayleigh amplitudes fill the tilt disk.
+                float omega = TWO_PI * (plane + Random01((uint)_Distribution.w + section * 7919u)) / planeCount;
+                // Revolve a tilted normal about THIS ring's central normal, never world Y.
+                float sinInclination, cosInclination, sinNode, cosNode;
+                sincos(inclination,sinInclination,cosInclination);
+                sincos(omega,sinNode,cosNode);
+                float3 n = normalize(cosInclination * _RingNormal + sinInclination * (cosNode*centralT + sinNode*centralB));
+                // Project the SAME reference tangent into each plane. This preserves lattice phase
+                // alignment instead of adding an unwanted full orbital turn with each node revolution.
+                float3 t = normalize(centralT - n * dot(centralT,n));
+                float3 b = cross(n,t);
+                float oldStagger = frac((plane + section * 0.5) * 0.5);
+                float distributedStagger = frac(orbit * 0.61803398875 + Random01((uint)_Distribution.w));
+                float stagger = lerp(oldStagger, distributedStagger, _Distribution.z);
+
+        result.tangent=float4(t,0); result.bitangent=float4(b,0);
+        result.data=float4(orbitRadius,stagger,radialOffset,abs(radialOffset)>2*_TorusData.x ? 1 : 0);
+    }
+    _Orbits[id]=result;
+}
+
+// Diagnostic only: clear eight exact uint counters per screen pixel.
+RWStructuredBuffer<uint> _DysonOverdrawPixels;
+uint _DysonOverdrawPixelCount, _DysonOverdrawDispatchWidth;
+[numthreads(64,1,1)]
+void ClearOverdraw(uint3 thread : SV_DispatchThreadID) {
+    uint pixel=thread.x+thread.y*_DysonOverdrawDispatchWidth;
+    if (pixel>=_DysonOverdrawPixelCount) return;
+    [unroll] for(uint channel=0;channel<10;channel++) _DysonOverdrawPixels[pixel*10+channel]=0;
+}
+
+// Every pixel of the tile must be opaque. Empty pixels invalidate the entire tile.
+groupshared float OcclusionTileDepth[64];
+[numthreads(8,8,1)]
+void BuildOcclusionTiles(uint3 pixel : SV_DispatchThreadID,uint3 tile : SV_GroupID,uint lane : SV_GroupIndex) {
+    float depth=1e30;
+    if(all(pixel.xy<(uint2)_OcclusionExtent.xy)) {
+        float4 hit=_SharedSurfaceHit.Load(int3(pixel.xy,0));
+        if(hit.w>=0) depth=dot(hit.xyz-_CameraPosition.xyz,_CameraForward.xyz);
+    }
+    OcclusionTileDepth[lane]=depth;
+    GroupMemoryBarrierWithGroupSync();
+    [unroll] for(uint step=32;step>0;step>>=1) {
+        if(lane<step) OcclusionTileDepth[lane]=max(OcclusionTileDepth[lane],OcclusionTileDepth[lane+step]);
+        GroupMemoryBarrierWithGroupSync();
+    }
+    if(lane==0) _CollectorOcclusionTilesRW[tile.xy]=OcclusionTileDepth[0];
+}
